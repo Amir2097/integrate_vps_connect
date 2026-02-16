@@ -1,0 +1,112 @@
+#!/bin/bash
+# Добавление нового WireGuard-клиента и вывод QR-кода конфига.
+# Запуск на сервере: sudo ./add-wg-client.sh [имя_клиента] [IP_или_домен_VPS]
+# Пример: sudo ./add-wg-client.sh friend1 82.117.84.212
+
+set -e
+
+WG_CONF="/etc/wireguard/wg0.conf"
+WG_SUBNET="10.66.0"
+CLIENT_NAME="${1:-client}"
+SERVER_ENDPOINT="${2:-$SERVER_ENDPOINT}"
+
+if [ -z "$SERVER_ENDPOINT" ]; then
+  echo "Укажи IP или домен сервера: $0 <имя_клиента> <IP_или_домен>"
+  echo "Пример: $0 friend1 82.117.84.212"
+  exit 1
+fi
+
+# Порт WireGuard (должен совпадать с ListenPort в wg0.conf)
+WG_PORT="${WG_PORT:-51820}"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Запусти скрипт с sudo."
+  exit 1
+fi
+
+if [ ! -f "$WG_CONF" ]; then
+  echo "Не найден $WG_CONF. Сначала настрой WireGuard по инструкции."
+  exit 1
+fi
+
+# Следующий свободный IP: ищем максимальный 10.66.0.X в AllowedIPs
+NEXT_IP=2
+if grep -q "AllowedIPs = $WG_SUBNET\." "$WG_CONF"; then
+  MAX=$(grep "AllowedIPs = $WG_SUBNET\." "$WG_CONF" | sed -n "s/.*$WG_SUBNET\.\([0-9]*\).*/\1/p" | sort -n | tail -1)
+  [ -n "$MAX" ] && NEXT_IP=$((MAX + 1))
+fi
+
+CLIENT_IP="$WG_SUBNET.$NEXT_IP"
+WORKDIR="/etc/wireguard/clients"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+
+# Генерация ключей клиента
+CLIENT_PRIVATE=$(wg genkey)
+CLIENT_PUBLIC=$(echo "$CLIENT_PRIVATE" | wg pubkey)
+
+# Публичный ключ сервера (интерфейс должен быть поднят или ключ в файле)
+if wg show wg0 public-key &>/dev/null; then
+  SERVER_PUBLIC=$(wg show wg0 public-key)
+else
+  [ -f /etc/wireguard/server_public.key ] && SERVER_PUBLIC=$(cat /etc/wireguard/server_public.key) || {
+    echo "Не удалось получить публичный ключ сервера (wg0 не запущен или нет server_public.key)."
+    exit 1
+  }
+fi
+
+# Добавление peer в конфиг
+PEER_BLOCK="
+[Peer]
+# $CLIENT_NAME
+PublicKey = $CLIENT_PUBLIC
+AllowedIPs = $CLIENT_IP/32
+"
+echo "$PEER_BLOCK" >> "$WG_CONF"
+
+# Применение конфига без перезапуска всего интерфейса
+if wg show wg0 &>/dev/null; then
+  wg syncconf wg0 <(wg-quick strip wg0)
+else
+  echo "Интерфейс wg0 не поднят. Выполни: wg-quick up wg0"
+fi
+
+# Сборка конфига клиента
+CLIENT_CONF="[Interface]
+PrivateKey = $CLIENT_PRIVATE
+Address = $CLIENT_IP/32
+DNS = 1.1.1.1, 1.0.0.1
+
+[Peer]
+PublicKey = $SERVER_PUBLIC
+Endpoint = $SERVER_ENDPOINT:$WG_PORT
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+"
+
+CONF_FILE="$WORKDIR/${CLIENT_NAME}.conf"
+echo "$CLIENT_CONF" > "$CONF_FILE"
+chmod 600 "$CONF_FILE"
+
+echo "----------------------------------------"
+echo "Клиент: $CLIENT_NAME"
+echo "VPN IP:  $CLIENT_IP/32"
+echo "Конфиг:  $CONF_FILE"
+echo "----------------------------------------"
+
+# QR-код в терминал (удобно по SSH)
+if command -v qrencode &>/dev/null; then
+  echo ""
+  echo "QR-код (скань приложением WireGuard на телефоне):"
+  echo ""
+  qrencode -t ansiutf8 < "$CONF_FILE"
+  echo ""
+  echo "Или сохрани в PNG: qrencode -t png -o $CLIENT_NAME.png < $CONF_FILE"
+else
+  echo "Для QR установи qrencode: apt install qrencode"
+  echo "Затем: qrencode -t ansiutf8 < $CONF_FILE"
+  echo "Или скачай конфиг и сгенерируй QR на ПК."
+fi
+
+echo ""
+echo "Готово. Конфиг для ручной выдачи: $CONF_FILE"

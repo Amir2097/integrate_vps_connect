@@ -1,0 +1,28 @@
+# Backend
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.17
+
+# Database
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+
+# Auth (bcrypt напрямую — без passlib, совместимо с новыми версиями bcrypt)
+bcrypt>=4.0,<5
+python-jose[cryptography]==3.3.0
+
+# Scheduler
+apscheduler==3.10.4
+
+# Templates
+jinja2==3.1.4
+
+# Config & env
+pydantic-settings==2.6.1
+
+# Telegram Bot
+aiogram==3.15.0
+
+# Utils
+httpx==0.28.1
+qrcode[pil]==7.4.2
