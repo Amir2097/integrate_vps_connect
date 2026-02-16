@@ -27,10 +27,43 @@ async def list_users(
             "telegram_id": u.telegram_id,
             "telegram_username": u.telegram_username,
             "full_name": u.full_name,
+            "is_blocked": u.is_blocked,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         }
         for u in users
     ]
+
+
+@router.post("/users/{user_id}/block")
+async def block_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_admin),
+):
+    """Временно отключить доступ пользователя. Конфиг не удаляется, при разблокировке доступ восстанавливается."""
+    r = await db.execute(select(User).where(User.id == user_id))
+    user = r.scalars().one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    user.is_blocked = True
+    await db.commit()
+    return {"ok": True, "user_id": user_id, "is_blocked": True}
+
+
+@router.post("/users/{user_id}/unblock")
+async def unblock_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_admin),
+):
+    """Включить доступ пользователя (разблокировать)."""
+    r = await db.execute(select(User).where(User.id == user_id))
+    user = r.scalars().one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    user.is_blocked = False
+    await db.commit()
+    return {"ok": True, "user_id": user_id, "is_blocked": False}
 
 
 @router.get("/payments/pending")

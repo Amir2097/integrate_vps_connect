@@ -74,22 +74,57 @@ docker run -d --name vpn-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:
 
 ---
 
-## Локальный запуск (проверка)
+## Локальный запуск с нуля (этот ПК)
 
-### 1. Виртуальное окружение и зависимости
+Ниже — полная последовательность: Docker PostgreSQL → venv и библиотеки → .env → запуск.
 
-```bash
-cd c:\Users\nikol\PycharmProjects\integrate_vps_connect
+### 1. PostgreSQL в Docker
+
+```powershell
+docker run -d --name vpn-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16
+```
+
+Через несколько секунд создать БД:
+
+```powershell
+docker exec -it vpn-pg psql -U postgres -c "CREATE DATABASE vpn_manager;"
+```
+
+В `.env` должна быть строка (если пароль `postgres`):
+
+```
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/vpn_manager
+```
+
+Таблицы (`users`, `subscriptions`, `payments`, `vpn_clients`) создаются автоматически при первом запуске бэкенда (lifespan в `app.main`). Если на другом ПК уже применялись миграции (например, `add_display_name.sql`), на чистой БД это не обязательно — модели уже содержат нужные поля.
+
+При необходимости выполнить миграции вручную (если подключаешься к старой БД без новых колонок):
+
+```powershell
+# Подставь свои USER, PASSWORD, HOST, PORT, DATABASE
+psql "postgresql://postgres:postgres@localhost:5432/vpn_manager" -f scripts/migrations/add_display_name.sql
+```
+
+Или через Docker:
+
+```powershell
+docker exec -i vpn-pg psql -U postgres -d vpn_manager < scripts/migrations/add_display_name.sql
+```
+
+### 2. Виртуальное окружение и зависимости
+
+```powershell
+cd c:\Users\Amir\PycharmProjects\integrate_vps_connect
 python -m venv venv
-venv\Scripts\activate
+.\venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. База и .env
+### 3. База и .env
 
-После того как PostgreSQL запущен и база `vpn_manager` создана (см. выше), скопируй `.env.example` в `.env` и подставь свой `DATABASE_URL` (логин/пароль/порт).
+После того как PostgreSQL запущен и база `vpn_manager` создана (см. выше), скопируй `.env.example` в `.env` и подставь свой `DATABASE_URL` (логин/пароль/порт). Файл `.env` ты уже перенёс — проверь, что `DATABASE_URL` указывает на локальный контейнер: `postgresql+asyncpg://postgres:postgres@localhost:5432/vpn_manager`.
 
-### 3. Остальные переменные в .env
+### 4. Остальные переменные в .env
 
 Скопируй пример: `copy .env.example .env`. Обязательно для админки:
 
@@ -112,7 +147,7 @@ python -c "from app.auth import hash_password; print(hash_password('твой_п�
 
 Для теста без WireGuard на ПК оставь `WG_SCRIPT_PATH` пустым — будет мок (конфиг не реальный).
 
-### 4. Запуск бэкенда
+### 5. Запуск бэкенда
 
 ```bash
 venv\Scripts\activate
@@ -121,7 +156,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Таблицы создадутся при первом запросе (lifespan). Открой: http://localhost:8000 — главная, http://localhost:8000/admin — админка, http://localhost:8000/docs — Swagger.
 
-### 5. Запуск бота и проверка Telegram
+### 6. Запуск бота и проверка Telegram
 
 В `.env` должны быть заданы:
 - `BOT_TOKEN` — токен от [@BotFather](https://t.me/BotFather) (команда /newbot).
@@ -147,11 +182,22 @@ python run_bot.py
 
 Если бот не отвечает — смотри вывод `python run_bot.py` и что бэкенд отвечает на http://localhost:8000/docs (проверь, например, GET /api/user/by-telegram/ТВОЙ_TELEGRAM_ID/subscription, подставив свой ID).
 
-## Деплой на VPS (кратко)
+## Авторизация и доступ к админке
 
-- Установи PostgreSQL, Python 3.11+, скопируй проект и `scripts/add-wg-client.sh` на сервер.
-- В `.env` укажи реальные `DATABASE_URL`, `BOT_TOKEN`, `BACKEND_URL` (например `http://127.0.0.1:8000`), `WG_SCRIPT_PATH=/path/to/add-wg-client.sh`, `SERVER_ENDPOINT`, при необходимости `WG_CLIENTS_DIR`, `WG_CONF_PATH`.
-- Запуск через systemd или supervisor: один процесс `uvicorn app.main:app --host 0.0.0.0 --port 8000`, второй — `python run_bot.py`. Nginx перед FastAPI по желанию.
+- **Вход в админку:** логин (`ADMIN_LOGIN`) и пароль. Пароль в `.env` хранится как bcrypt-хэш (`ADMIN_PASSWORD_HASH`). После входа в cookie выставляется сессия `admin_session` (хранится в памяти процесса, 24 ч).
+- **Доступ по IP:** зайти по `http://IP:8000/admin` можно, но пароль и cookie передаются по HTTP в открытом виде. **Для прода обязательно использовать HTTPS** (домен + Nginx + Let's Encrypt) — см. [docs/DEPLOY_PROD.md](docs/DEPLOY_PROD.md).
+- **REST API** (для скриптов): JWT через `POST /auth/login` → заголовок `Authorization: Bearer <token>`. Секрет подписи — `JWT_SECRET`.
+
+---
+
+## Деплой на VPS (прод)
+
+**Подробная пошаговая инструкция:** [docs/DEPLOY_PROD.md](docs/DEPLOY_PROD.md) — установка зависимостей, PostgreSQL, клонирование проекта, настройка `.env`, скрипт WireGuard и sudo, миграции БД, systemd (бэкенд + бот), Nginx с SSL, файрвол.
+
+Кратко:
+- Установи PostgreSQL, Python 3.11+, Nginx, скопируй проект и `scripts/add-wg-client.sh` на сервер.
+- В `.env` укажи реальные секреты и пути: `DATABASE_URL`, `ADMIN_PASSWORD_HASH`, `JWT_SECRET`, `INTERNAL_SECRET`, `BOT_TOKEN`, `BACKEND_URL=http://127.0.0.1:8000`, `WG_SCRIPT_PATH=/path/to/add-wg-client.sh`, `SERVER_ENDPOINT`.
+- Запуск через systemd: `uvicorn app.main:app --host 127.0.0.1 --port 8000` (доступ снаружи только через Nginx по HTTPS), отдельно — `python run_bot.py`.
 
 ## Полезные эндпоинты
 
@@ -161,3 +207,30 @@ python run_bot.py
 - `GET /api/user/by-telegram/{id}/vpn-config` — конфиг для выдачи в боте
 - `GET /admin` — дашборд (после логина)
 - `POST /auth/login` — логин для API (form: username, password) → JWT для заголовка Authorization
+
+---
+
+## Работа с проектом на нескольких ПК (в т.ч. в Cursor)
+
+Чтобы одинаково разрабатывать проект на разных компьютерах:
+
+1. **Код — только в Git**
+   - Все изменения кода храни в репозитории: `git add`, `git commit`, `git push` на одном ПК; на другом — `git pull`.
+   - Не коммить `.env` (он уже в `.gitignore`) — на каждом ПК свой локальный `.env`.
+
+2. **Локальные настройки на каждом ПК**
+   - На каждом компьютере: свой `venv` (или переиспользуй один и тот же путь), свой `.env` (скопировал с другого ПК или собрал из `.env.example`).
+   - PostgreSQL: на каждом ПК либо свой локальный Docker/установленный PostgreSQL, либо (реже) общая удалённая БД — тогда в `.env` на всех ПК один и тот же `DATABASE_URL`.
+
+3. **Cursor**
+   - Открывай одну и ту же папку проекта (клон репозитория). Cursor хранит настройки workspace в `.vscode/` — имеет смысл часть настроек (например, рекомендуемые расширения) закоммитить, а личные — оставить только локально.
+   - Правила и подсказки для AI можно держать в репозитории: файлы в `.cursor/rules/` или корневой `AGENTS.md` — тогда на всех ПК при открытии проекта будет один и тот же контекст.
+
+4. **Чек-лист при переходе на другой ПК**
+   - `git pull` — подтянуть последний код.
+   - Скопировать/проверить `.env` (или создать из `.env.example`).
+   - Запустить PostgreSQL (Docker или сервис), при необходимости создать БД и применить миграции.
+   - `python -m venv venv` (если venv ещё нет), `pip install -r requirements.txt`.
+   - Запуск: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` и в другом терминале `python run_bot.py`.
+
+Итого: код и общие настройки — в Git; секреты и локальные пути — в `.env` на каждой машине; БД — локально на каждом ПК или одна общая, по желанию.

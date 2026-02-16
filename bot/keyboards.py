@@ -10,6 +10,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="Получить конфиг"),
+                KeyboardButton(text="Реквизиты для оплаты"),
                 KeyboardButton(text="Инструкция по установке"),
             ],
         ],

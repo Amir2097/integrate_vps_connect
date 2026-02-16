@@ -33,7 +33,8 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
 class CreatePaymentRequest(BaseModel):
     user_id: int | None = None
     telegram_id: int | None = None
-    display_name: str | None = None  # название конфига от пользователя (для отображения в боте)
+    display_name: str | None = None  # название конфига от пользователя
+    months: int = 1  # срок подписки: 1, 3, 5 или 12 месяцев
 
 
 class CreatePaymentResponse(BaseModel):
@@ -59,7 +60,7 @@ async def create_payment_request(data: CreatePaymentRequest, db: AsyncSession = 
         raise HTTPException(400, "Provide user_id or telegram_id")
     try:
         sub, payment = await subscription_service.create_payment_request(
-            db, user_id, display_name=data.display_name
+            db, user_id, display_name=data.display_name, months=data.months
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -67,11 +68,14 @@ async def create_payment_request(data: CreatePaymentRequest, db: AsyncSession = 
     if user:
         name = user.full_name or "—"
         username = f"@{user.telegram_username}" if user.telegram_username else "—"
+        months = getattr(payment, "subscription_months", 1)
+        amount = float(payment.amount)
         await notify_admin_payment_buttons(
             payment.id,
             f"🆕 <b>Новая заявка на VPN</b>\n"
             f"Кто: {name} ({username})\n"
             f"Telegram ID: <code>{user.telegram_id}</code>\n"
+            f"Срок: {months} мес., сумма: {amount:.0f} ₽\n"
             f"Подтвердите оплату кнопкой ниже или в админке.",
         )
     return CreatePaymentResponse(subscription_id=sub.id, payment_id=payment.id)
@@ -101,6 +105,12 @@ async def get_subscription_by_telegram(telegram_id: int, db: AsyncSession = Depe
     user = r.scalars().one_or_none()
     if not user:
         return SubscriptionStatusResponse(status="none", expires_at=None)
+    if user.is_blocked:
+        sub = await subscription_service.get_user_subscription(db, user.id)
+        return SubscriptionStatusResponse(
+            status="blocked",
+            expires_at=sub.expires_at.isoformat() if sub and sub.expires_at else None,
+        )
     sub = await subscription_service.get_user_subscription(db, user.id)
     if not sub:
         return SubscriptionStatusResponse(status="none", expires_at=None)
@@ -112,14 +122,17 @@ async def get_subscription_by_telegram(telegram_id: int, db: AsyncSession = Depe
 
 @router.get("/user/by-telegram/{telegram_id}/subscriptions")
 async def get_subscriptions_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    """Список всех подписок пользователя для «Моя подписка»: название, статус, дата окончания."""
+    """Список всех подписок пользователя для «Моя подписка»: название, статус, дата окончания, is_blocked."""
     from sqlalchemy import select
     from app.models import User
     r = await db.execute(select(User).where(User.telegram_id == telegram_id))
     user = r.scalars().one_or_none()
     if not user:
         return []
-    return await subscription_service.get_user_subscriptions_list(db, user.id)
+    items = await subscription_service.get_user_subscriptions_list(db, user.id)
+    for item in items:
+        item["is_blocked"] = user.is_blocked
+    return items
 
 
 class PendingPaymentResponse(BaseModel):
@@ -149,6 +162,12 @@ async def get_vpn_config(
     vpn_client_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
+    from sqlalchemy import select
+    from app.models import User
+    r = await db.execute(select(User).where(User.id == user_id))
+    user = r.scalars().one_or_none()
+    if not user or user.is_blocked:
+        return VpnConfigResponse(config=None)
     config = await subscription_service.get_user_vpn_config(db, user_id, vpn_client_id=vpn_client_id)
     return VpnConfigResponse(config=config)
 
@@ -163,7 +182,7 @@ async def get_vpn_config_by_telegram(
     from app.models import User
     r = await db.execute(select(User).where(User.telegram_id == telegram_id))
     user = r.scalars().one_or_none()
-    if not user:
+    if not user or user.is_blocked:
         return VpnConfigResponse(config=None)
     config = await subscription_service.get_user_vpn_config(db, user.id, vpn_client_id=vpn_client_id)
     return VpnConfigResponse(config=config)
@@ -171,11 +190,11 @@ async def get_vpn_config_by_telegram(
 
 @router.get("/user/by-telegram/{telegram_id}/vpn-configs")
 async def get_vpn_configs_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_db)):
-    """Список конфигов пользователя (несколько подписок = несколько конфигов)."""
+    """Список конфигов пользователя (несколько подписок = несколько конфигов). При блокировке — пустой список."""
     from sqlalchemy import select
     from app.models import User
     r = await db.execute(select(User).where(User.telegram_id == telegram_id))
     user = r.scalars().one_or_none()
-    if not user:
+    if not user or user.is_blocked:
         return []
     return await subscription_service.get_user_vpn_configs_list(db, user.id)

@@ -13,6 +13,7 @@ class User(Base):
     telegram_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)  # доступ приостановлен админом, конфиг не удаляется
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     subscriptions = relationship("Subscription", back_populates="user")

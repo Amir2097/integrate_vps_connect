@@ -12,6 +12,7 @@
             <th>User ID</th>
             <th>Имя / @username</th>
             <th>Telegram ID</th>
+            <th>Срок / Сумма</th>
             <th>Дата заявки</th>
             <th>Действия</th>
         </tr>
@@ -23,6 +24,7 @@
             <td>{{ item.user.id }}</td>
             <td>{{ item.user.full_name or '—' }} {% if item.user.telegram_username %}<br><small>@{{ item.user.telegram_username }}</small>{% endif %}</td>
             <td><code>{{ item.user.telegram_id }}</code></td>
+            <td>{{ item.payment.subscription_months }} мес. / {{ item.payment.amount }} ₽</td>
             <td>{{ item.payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
             <td>
                 <form method="post" action="/admin/payments/{{ item.payment.id }}/confirm" class="d-inline">
@@ -45,15 +47,18 @@
 {% endif %}
 
 <h2 class="h5 mt-4">Подписки (последние)</h2>
+<p class="text-muted small">«Название конфига» — как пользователь назвал конфиг в боте. Конфиг можно отключить отдельно (остальные у пользователя работают).</p>
 <table class="table table-striped">
     <thead>
         <tr>
             <th>ID подп.</th>
             <th>User ID</th>
             <th>Имя / @username</th>
+            <th>Название конфига</th>
             <th>Telegram ID</th>
             <th>Статус</th>
             <th>Истекает</th>
+            <th>Конфиг</th>
         </tr>
     </thead>
     <tbody>
@@ -61,10 +66,63 @@
         <tr>
             <td>{{ item.sub.id }}</td>
             <td>{{ item.user.id }}</td>
-            <td>{{ item.user.full_name or '—' }} {% if item.user.telegram_username %}<br><small>@{{ item.user.telegram_username }}</small>{% endif %}</td>
+            <td>{{ item.user.full_name or '—' }} {% if item.user.telegram_username %}<br><small>@{{ item.user.telegram_username }}</small>{% endif %}{% if item.user.is_blocked %} <span class="badge bg-warning text-dark">польз. заблок.</span>{% endif %}</td>
+            <td>{{ item.sub.display_name or '—' }}</td>
             <td><code>{{ item.user.telegram_id }}</code></td>
             <td><span class="badge bg-{{ 'success' if item.sub.status.value == 'active' else 'secondary' if item.sub.status.value == 'pending_payment' else 'danger' }}">{{ item.sub.status.value }}</span></td>
             <td>{{ item.sub.expires_at.strftime('%d.%m.%Y') if item.sub.expires_at else '—' }}</td>
+            <td>
+                {% if item.vpn_client %}
+                    {% if item.vpn_client.is_blocked %}
+                    <span class="badge bg-danger">откл.</span>
+                    <form method="post" action="/admin/configs/{{ item.vpn_client.id }}/unblock" class="d-inline">
+                        <button type="submit" class="btn btn-success btn-sm">Вкл. конфиг</button>
+                    </form>
+                    {% else %}
+                    <span class="badge bg-success">вкл.</span>
+                    <form method="post" action="/admin/configs/{{ item.vpn_client.id }}/block" class="d-inline">
+                        <button type="submit" class="btn btn-outline-warning btn-sm">Откл. конфиг</button>
+                    </form>
+                    {% endif %}
+                {% else %}
+                    <span class="text-muted">—</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h2 class="h5 mt-4">Пользователи — отключить/включить доступ</h2>
+<p class="text-muted small">Заблокированный пользователь не получает конфиг и видит «доступ приостановлен». Конфиг не удаляется — разблокировка вернёт доступ без смены конфига.</p>
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Имя / @username</th>
+            <th>Telegram ID</th>
+            <th>Доступ</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for u in users_list %}
+        <tr>
+            <td>{{ u.id }}</td>
+            <td>{{ u.full_name or '—' }} {% if u.telegram_username %}<br><small>@{{ u.telegram_username }}</small>{% endif %}</td>
+            <td><code>{{ u.telegram_id or '—' }}</code></td>
+            <td>{% if u.is_blocked %}<span class="badge bg-danger">отключён</span>{% else %}<span class="badge bg-success">включён</span>{% endif %}</td>
+            <td>
+                {% if u.is_blocked %}
+                <form method="post" action="/admin/users/{{ u.id }}/unblock" class="d-inline">
+                    <button type="submit" class="btn btn-success btn-sm">Включить</button>
+                </form>
+                {% else %}
+                <form method="post" action="/admin/users/{{ u.id }}/block" class="d-inline">
+                    <button type="submit" class="btn btn-outline-warning btn-sm">Отключить</button>
+                </form>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

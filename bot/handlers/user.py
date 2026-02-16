@@ -9,11 +9,28 @@ from bot.keyboards import main_keyboard
 from app.config import settings
 from app.services.telegram_notify import CONFIG_WARNING, config_to_qr_png, send_message
 
+
+def _payment_info_text() -> str:
+    """Официальный текст реквизитов для оплаты подписки."""
+    amount = int(settings.subscription_amount)
+    phone = (settings.payment_phone or "").strip()
+    if phone:
+        recipient = f"на номер телефона <b>{phone}</b>"
+    else:
+        recipient = "на номер телефона (уточните у администратора)"
+    return (
+        "<b>Реквизиты для оплаты подписки</b>\n\n"
+        f"Оплата производится переводом {recipient}.\n\n"
+        "В сообщении к переводу <b>ничего не указывайте</b> и не пишите.\n\n"
+        f"Стоимость подписки: <b>{amount} ₽ в месяц</b>."
+    )
+
 router = Router()
 
 
 class ConnectVPN(StatesGroup):
     wait_config_name = State()
+    wait_months = State()
 
 
 async def _api(method: str, path: str, json: dict | None = None, headers: dict | None = None) -> dict | list:
@@ -60,30 +77,70 @@ async def connect_vpn(message: Message, state: FSMContext):
     )
 
 
+def _months_keyboard():
+    """Клавиатура выбора срока подписки (100 ₽/мес)."""
+    price = int(settings.subscription_amount)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"1 месяц — {price} ₽", callback_data="sub_months:1"),
+            InlineKeyboardButton(text=f"3 месяца — {price * 3} ₽", callback_data="sub_months:3"),
+        ],
+        [
+            InlineKeyboardButton(text=f"5 месяцев — {price * 5} ₽", callback_data="sub_months:5"),
+            InlineKeyboardButton(text=f"12 месяцев — {price * 12} ₽", callback_data="sub_months:12"),
+        ],
+    ])
+
+
 @router.message(ConnectVPN.wait_config_name, F.text)
 async def connect_vpn_enter_name(message: Message, state: FSMContext):
-    await state.clear()
     raw = (message.text or "").strip()
     display_name = None if raw == "-" else (raw[:128] if raw else None)
+    await state.update_data(display_name=display_name)
+    await state.set_state(ConnectVPN.wait_months)
+    await message.answer(
+        "Выберите срок подписки (стоимость 100 ₽ в месяц):",
+        reply_markup=_months_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("sub_months:"))
+async def connect_vpn_choose_months(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
     try:
-        data = await _api("POST", "/api/payment/request", {
-            "telegram_id": message.from_user.id,
+        months = int(callback.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await callback.message.answer("Ошибка выбора. Начните заново: «Подключиться к VPN».")
+        await state.clear()
+        return
+    if months not in (1, 3, 5, 12):
+        months = 1
+    data = await state.get_data()
+    display_name = data.get("display_name")
+    await state.clear()
+    try:
+        result = await _api("POST", "/api/payment/request", {
+            "telegram_id": callback.from_user.id,
             "display_name": display_name,
+            "months": months,
         })
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 400:
-            await message.answer(
+            await callback.message.answer(
                 "У вас уже есть заявка на подключение. Ожидайте подтверждения или нажмите «Я оплатил» после перевода."
             )
             return
-        await message.answer(f"Ошибка: {e.response.text}")
+        await callback.message.answer(f"Ошибка: {e.response.text}")
         return
     except Exception as e:
-        await message.answer(f"Ошибка: {e}")
+        await callback.message.answer(f"Ошибка: {e}")
         return
-    await message.answer(
-        "Заявка создана. Переведите оплату на карту (реквизиты у администратора), "
-        "затем нажмите «Я оплатил». После подтверждения вам придёт конфиг для подключения."
+    amount = int(settings.subscription_amount) * months
+    await callback.message.answer(
+        f"Заявка создана на <b>{months} мес.</b> (к оплате {amount} ₽).\n\n"
+        + _payment_info_text() + "\n\n"
+        "После перевода нажмите «Я оплатил». После подтверждения оплаты вам придёт конфиг для подключения.",
+        parse_mode="HTML",
     )
 
 
@@ -131,7 +188,10 @@ async def my_subscription(message: Message):
     for s in items:
         name = s.get("display_name") or f"Конфиг #{s.get('id', '?')}"
         status = s.get("status", "")
-        if status == "pending_payment":
+        is_blocked = s.get("is_blocked", False)
+        if is_blocked and status == "active":
+            lines.append(f"• <b>{name}</b>: доступ приостановлен администратором")
+        elif status == "pending_payment":
             lines.append(f"• <b>{name}</b>: ожидает подтверждения оплаты")
         elif status == "active":
             exp = _fmt_date(s.get("expires_at"))
@@ -139,6 +199,8 @@ async def my_subscription(message: Message):
         elif status == "expired":
             exp = _fmt_date(s.get("expires_at"))
             lines.append(f"• <b>{name}</b>: истекла {exp}")
+        elif status == "blocked":
+            lines.append(f"• <b>{name}</b>: доступ приостановлен администратором")
         else:
             lines.append(f"• <b>{name}</b>: {status}")
     await message.answer("Ваши подписки:\n\n" + "\n".join(lines))
@@ -162,7 +224,10 @@ async def get_config(message: Message):
         await message.answer("Ошибка запроса.")
         return
     if not configs:
-        await message.answer("Конфиг ещё не выдан. Дождитесь подтверждения оплаты администратором.")
+        await message.answer(
+            "Конфиг недоступен. Если вы уже получали конфиг ранее, возможно, доступ приостановлен администратором. "
+            "Обратитесь в поддержку."
+        )
         return
     if len(configs) == 1:
         cid = configs[0]["id"]
@@ -380,6 +445,11 @@ INSTALL_INSTRUCTIONS = """
 
 Если конфиг не подключается — проверьте интернет и что подписка активна («Моя подписка»).
 """
+
+
+@router.message(F.text == "Реквизиты для оплаты")
+async def payment_info(message: Message):
+    await message.answer(_payment_info_text(), parse_mode="HTML")
 
 
 @router.message(F.text == "Инструкция по установке")

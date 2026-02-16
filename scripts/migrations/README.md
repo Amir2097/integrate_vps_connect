@@ -2,21 +2,19 @@
 
 ## 1. База данных
 
-**Если БД уже существует** (таблицы `subscriptions` и `vpn_clients` уже есть) — добавьте новые колонки:
+**Если БД уже существует** — выполните миграции для новых колонок:
 
 ```bash
-# Из корня проекта, с указанием своей строки подключения:
+# Из корня проекта (по порядку):
 psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f scripts/migrations/add_display_name.sql
+psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f scripts/migrations/add_user_is_blocked.sql
+psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f scripts/migrations/add_payment_months_vpn_block.sql
 ```
 
-Или из папки миграций:
+Или через Docker:  
+`docker exec -i vpn-pg psql -U postgres -d vpn_manager < scripts/migrations/add_payment_months_vpn_block.sql`
 
-```bash
-cd scripts/migrations
-psql "postgresql://..." -f add_display_name.sql
-```
-
-**Если БД создаётся с нуля** (первый запуск) — ничего делать не нужно: `create_all` при старте приложения создаст таблицы уже с полем `display_name`.
+**Если БД создаётся с нуля** — ничего делать не нужно: `create_all` при старте приложения создаст таблицы со всеми полями.
 
 ---
 

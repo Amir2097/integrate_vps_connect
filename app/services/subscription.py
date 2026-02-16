@@ -37,8 +37,9 @@ class SubscriptionService:
         db: AsyncSession,
         user_id: int,
         display_name: str | None = None,
+        months: int = 1,
     ) -> tuple[Subscription, Payment]:
-        """Создаёт подписку в pending_payment и платёж в pending. Один активный pending на пользователя."""
+        """Создаёт подписку в pending_payment и платёж в pending. months: 1, 3, 5 или 12."""
         r = await db.execute(
             select(Subscription).where(
                 Subscription.user_id == user_id,
@@ -47,6 +48,8 @@ class SubscriptionService:
         )
         if r.scalars().first():
             raise ValueError("У вас уже есть заявка, ожидайте подтверждения")
+        if months not in (1, 3, 5, 12):
+            months = 1
         name_clean = (display_name or "").strip()[:128] or None
         sub = Subscription(
             user_id=user_id,
@@ -55,10 +58,12 @@ class SubscriptionService:
         )
         db.add(sub)
         await db.flush()
+        amount = float(settings.subscription_amount) * months
         payment = Payment(
             user_id=user_id,
             subscription_id=sub.id,
-            amount=settings.subscription_amount,
+            subscription_months=months,
+            amount=amount,
             status=PaymentStatus.pending,
         )
         db.add(payment)
@@ -111,9 +116,10 @@ class SubscriptionService:
         if confirmed and payment.subscription_id:
             r = await db.execute(select(Subscription).where(Subscription.id == payment.subscription_id))
             sub = r.scalars().one()
+            months = getattr(payment, "subscription_months", 1) or 1
             sub.status = SubscriptionStatus.active
             sub.started_at = datetime.utcnow()
-            sub.expires_at = datetime.utcnow() + timedelta(days=settings.subscription_days)
+            sub.expires_at = datetime.utcnow() + timedelta(days=settings.subscription_days * months)
 
             # Создать VPN-клиента: вызвать скрипт, сохранить в БД
             client_name = f"user{payment.user_id}_{sub.id}"
@@ -127,6 +133,7 @@ class SubscriptionService:
             display_name = (sub.display_name or "").strip() or None
             vpn = VpnClient(
                 user_id=payment.user_id,
+                subscription_id=sub.id,
                 name=client_name,
                 display_name=display_name,
                 wg_public_key=data["public_key"],
@@ -157,13 +164,14 @@ class SubscriptionService:
 
     @staticmethod
     async def get_user_subscriptions_list(db: AsyncSession, user_id: int) -> list[dict]:
-        """Список всех подписок пользователя: для «Моя подписка» (название, статус, дата окончания)."""
+        """Список всех подписок пользователя: название, статус, дата окончания, is_blocked конфига."""
         r = await db.execute(
-            select(Subscription)
+            select(Subscription, VpnClient)
+            .outerjoin(VpnClient, VpnClient.subscription_id == Subscription.id)
             .where(Subscription.user_id == user_id)
             .order_by(Subscription.created_at.asc())
         )
-        subs = r.scalars().all()
+        rows = r.all()
         return [
             {
                 "id": s.id,
@@ -171,33 +179,40 @@ class SubscriptionService:
                 "status": s.status.value,
                 "expires_at": s.expires_at.isoformat() if s.expires_at else None,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
+                "is_blocked": vc.is_blocked if vc else False,
             }
-            for i, s in enumerate(subs)
+            for i, (s, vc) in enumerate(rows)
         ]
 
     @staticmethod
     async def get_user_vpn_config(db: AsyncSession, user_id: int, vpn_client_id: int | None = None) -> str | None:
-        """Конфиг по user_id; если vpn_client_id задан — конфиг этого клиента (если принадлежит user)."""
+        """Конфиг по user_id; если конфиг или пользователь заблокированы — None."""
         if vpn_client_id is not None:
             r = await db.execute(
                 select(VpnClient).where(
                     VpnClient.id == vpn_client_id,
                     VpnClient.user_id == user_id,
+                    VpnClient.is_blocked.is_(False),
                 )
             )
             client = r.scalars().one_or_none()
             return client.config_content if client else None
         r = await db.execute(
-            select(VpnClient).where(VpnClient.user_id == user_id).order_by(VpnClient.created_at.desc()).limit(1)
+            select(VpnClient)
+            .where(VpnClient.user_id == user_id, VpnClient.is_blocked.is_(False))
+            .order_by(VpnClient.created_at.desc())
+            .limit(1)
         )
         client = r.scalars().one_or_none()
         return client.config_content if client else None
 
     @staticmethod
     async def get_user_vpn_configs_list(db: AsyncSession, user_id: int) -> list[dict]:
-        """Список VPN-конфигов пользователя: id, name, created_at (для выбора «Получить конфиг»)."""
+        """Список VPN-конфигов пользователя (только не заблокированные)."""
         r = await db.execute(
-            select(VpnClient).where(VpnClient.user_id == user_id).order_by(VpnClient.created_at.asc())
+            select(VpnClient)
+            .where(VpnClient.user_id == user_id, VpnClient.is_blocked.is_(False))
+            .order_by(VpnClient.created_at.asc())
         )
         clients = r.scalars().all()
         return [
@@ -225,8 +240,8 @@ class SubscriptionService:
         subs = r.scalars().all()
         for sub in subs:
             sub.status = SubscriptionStatus.expired
-            # Опционально: отозвать VPN-клиентов этого пользователя
-            r2 = await db.execute(select(VpnClient).where(VpnClient.user_id == sub.user_id))
+            # Отозвать только конфиг этой подписки (по subscription_id)
+            r2 = await db.execute(select(VpnClient).where(VpnClient.subscription_id == sub.id))
             for vpn in r2.scalars().all():
                 await wireguard_service.revoke_client(vpn.wg_public_key)
         await db.flush()

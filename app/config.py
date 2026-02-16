@@ -23,7 +23,9 @@ class Settings(BaseSettings):
     wg_port: int = 51820
 
     subscription_days: int = 30  # ровно 30 = месяц; напоминание за 3 дня до истечения
-    subscription_amount: float = 100.0  # сумма за один конфиг (₽), для отображения в админке
+    subscription_amount: float = 100.0  # сумма за один конфиг (₽), для отображения в админке и боте
+    # Номер телефона для перевода (СБП/банк). Если пусто — в боте пишем «уточните у администратора»
+    payment_phone: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

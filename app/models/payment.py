@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import String, DateTime, ForeignKey, Enum, Numeric, Text
+from sqlalchemy import String, DateTime, ForeignKey, Enum, Numeric, Text, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,6 +19,7 @@ class Payment(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     subscription_id: Mapped[int | None] = mapped_column(ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True)
+    subscription_months: Mapped[int] = mapped_column(Integer, default=1)  # срок подписки в месяцах (1, 3, 5, 12)
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     status: Mapped[PaymentStatus] = mapped_column(Enum(PaymentStatus), default=PaymentStatus.pending)
     admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)

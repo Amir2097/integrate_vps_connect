@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.auth import verify_password
 from app.config import settings
-from app.models import User, Payment, PaymentStatus, Subscription
+from app.models import User, Payment, PaymentStatus, Subscription, VpnClient
+from app.services.telegram_notify import send_message
 
 router = APIRouter(prefix="/admin", tags=["admin-panel"])
 _templates_dir = Path(__file__).resolve().parent.parent / "templates"
@@ -112,17 +113,113 @@ async def admin_dashboard(
     ]
 
     r2 = await db.execute(
-        select(Subscription, User)
+        select(Subscription, User, VpnClient)
         .join(User, Subscription.user_id == User.id)
+        .outerjoin(VpnClient, VpnClient.subscription_id == Subscription.id)
         .order_by(Subscription.created_at.desc())
         .limit(50)
     )
-    subs_with_users = [{"sub": s, "user": u} for s, u in r2.all()]
+    subs_with_users = [{"sub": s, "user": u, "vpn_client": vc} for s, u, vc in r2.all()]
+
+    r3 = await db.execute(select(User).order_by(User.id))
+    users_list = list(r3.scalars().all())
 
     return templates.TemplateResponse(
         "admin_dashboard.html",
-        {"request": request, "pending_payments": pending, "subscriptions": subs_with_users},
+        {"request": request, "pending_payments": pending, "subscriptions": subs_with_users, "users_list": users_list},
     )
+
+
+@router.post("/users/{user_id}/block")
+async def admin_block_user(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin_session(request):
+        return RedirectResponse(url="/admin/login", status_code=302)
+    r = await db.execute(select(User).where(User.id == user_id))
+    user = r.scalars().one_or_none()
+    if user:
+        user.is_blocked = True
+        await db.commit()
+        if user.telegram_id:
+            await send_message(
+                user.telegram_id,
+                "⛔ <b>Доступ к VPN приостановлен</b> администратором. По вопросам обращайтесь в поддержку.",
+            )
+    return RedirectResponse(url="/admin", status_code=302)
+
+
+@router.post("/users/{user_id}/unblock")
+async def admin_unblock_user(
+    user_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin_session(request):
+        return RedirectResponse(url="/admin/login", status_code=302)
+    r = await db.execute(select(User).where(User.id == user_id))
+    user = r.scalars().one_or_none()
+    if user:
+        user.is_blocked = False
+        await db.commit()
+        if user.telegram_id:
+            await send_message(
+                user.telegram_id,
+                "✅ <b>Доступ к VPN снова активен.</b> Можете пользоваться конфигами («Получить конфиг»).",
+            )
+    return RedirectResponse(url="/admin", status_code=302)
+
+
+@router.post("/configs/{vpn_client_id}/block")
+async def admin_block_config(
+    vpn_client_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin_session(request):
+        return RedirectResponse(url="/admin/login", status_code=302)
+    r = await db.execute(
+        select(VpnClient, User).join(User, VpnClient.user_id == User.id).where(VpnClient.id == vpn_client_id)
+    )
+    row = r.one_or_none()
+    if row:
+        vpn_client, user = row
+        vpn_client.is_blocked = True
+        await db.commit()
+        name = (vpn_client.display_name or vpn_client.name or "конфиг").strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if user.telegram_id:
+            await send_message(
+                user.telegram_id,
+                f"⛔ Доступ по конфигу <b>«{name}»</b> приостановлен администратором. Остальные конфиги работают.",
+            )
+    return RedirectResponse(url="/admin", status_code=302)
+
+
+@router.post("/configs/{vpn_client_id}/unblock")
+async def admin_unblock_config(
+    vpn_client_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin_session(request):
+        return RedirectResponse(url="/admin/login", status_code=302)
+    r = await db.execute(
+        select(VpnClient, User).join(User, VpnClient.user_id == User.id).where(VpnClient.id == vpn_client_id)
+    )
+    row = r.one_or_none()
+    if row:
+        vpn_client, user = row
+        vpn_client.is_blocked = False
+        await db.commit()
+        name = (vpn_client.display_name or vpn_client.name or "конфиг").strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if user.telegram_id:
+            await send_message(
+                user.telegram_id,
+                f"✅ Доступ по конфигу <b>«{name}»</b> снова активен.",
+            )
+    return RedirectResponse(url="/admin", status_code=302)
 
 
 @router.post("/payments/{payment_id}/confirm")
