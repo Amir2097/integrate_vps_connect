@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     wg_script_path: str = ""
     wg_conf_path: str = "/etc/wireguard/wg0.conf"
     wg_clients_dir: str = "/etc/wireguard/clients"
+    # Запускать скрипт и wg-команды через sudo (true) или напрямую от пользователя процесса (false).
+    # Если сервис крутится от пользователя с прямыми правами на скрипт и /etc/wireguard — ставь false.
+    wg_use_sudo: bool = True
     server_endpoint: str = "82.117.84.212"
     wg_port: int = 51820
 

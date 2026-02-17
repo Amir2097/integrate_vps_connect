@@ -116,16 +116,20 @@ async def send_activation_choice(telegram_id: int, vpn_client_id: int) -> bool:
     Конфиг пользователь получит после нажатия кнопки в боте (обработчики act_cfg:txt / act_cfg:qr).
     """
     if not settings.bot_token:
+        print("[Telegram] send_activation_choice: BOT_TOKEN не задан, сообщение не отправлено. Проверь .env и WorkingDirectory в systemd.")
         return False
     text = (
         "✅ <b>Ваша подписка активирована.</b>\n\n"
         "Выберите формат получения конфига:"
     )
-    return await send_message_with_buttons(
+    ok = await send_message_with_buttons(
         telegram_id,
         text,
         _activation_format_keyboard(vpn_client_id),
     )
+    if not ok:
+        print(f"[Telegram] send_activation_choice: не удалось отправить сообщение пользователю {telegram_id}")
+    return ok
 
 
 async def send_config_to_user(telegram_id: int, config_text: str) -> bool:

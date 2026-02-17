@@ -158,32 +158,22 @@ python -c "from app.auth import hash_password; print(hash_password('твой_п�
 
 ### 4.6. Скрипт WireGuard и права
 
-Скрипт уже в репозитории: `scripts/add-wg-client.sh`. Его нужно запускать от root (доступ к `/etc/wireguard`, `wg`).
+Есть два варианта.
 
-```bash
-chmod +x /opt/vpn-manager/scripts/add-wg-client.sh
+**Вариант A: запуск через sudo** (по умолчанию, `WG_USE_SUDO=true` в `.env`).  
+Скрипт лежит, например, в проекте: `scripts/add-wg-client.sh`. Его вызывает процесс через `sudo`, поэтому нужны права sudo без пароля для этого скрипта и для `wg syncconf` / `wg-quick strip` (см. примеры sudoers в старых версиях инструкции).
+
+**Вариант B: запуск без sudo** (пользователь процесса имеет прямые права на скрипт и каталог WireGuard).  
+На сервере скрипт стоит, например, в `/usr/local/bin/add-wg-client.sh`, пользователь `amir` может запускать его напрямую и имеет доступ к `/etc/wireguard` (чтение/запись `wg0.conf`, каталог `clients`). В `.env` задаёшь:
+
+```env
+WG_SCRIPT_PATH=/usr/local/bin/add-wg-client.sh
+WG_USE_SUDO=false
 ```
 
-Приложение будет вызывать скрипт через `sudo`. Настроим sudo без пароля только для этого скрипта:
+Сервис systemd должен запускаться от этого же пользователя (`User=amir` в unit). Тогда приложение вызывает скрипт и команды `wg` / `wg-quick` **без** `sudo` — окружение systemd не мешает, конфликта с sudo нет.
 
-```bash
-# Пользователь, от которого будет запускаться uvicorn (обычно отдельный системный пользователь или root)
-# Вариант 1: приложение под root (проще, но менее безопасно)
-# Тогда просто убедись, что скрипт вызывается с sudo — при запуске от root sudo может не спрашивать пароль.
-
-# Вариант 2: приложение под пользователем vpnapp (рекомендуется)
-adduser --disabled-password --gecos "" vpnapp
-chown -R vpnapp:vpnapp /opt/vpn-manager
-# Разрешить vpnapp запускать только скрипт от root:
-echo 'vpnapp ALL=(root) NOPASSWD: /opt/vpn-manager/scripts/add-wg-client.sh' > /etc/sudoers.d/vpn-manager-wg
-echo 'vpnapp ALL=(root) NOPASSWD: /usr/bin/wg syncconf wg0 -' >> /etc/sudoers.d/vpn-manager-wg
-echo 'vpnapp ALL=(root) NOPASSWD: /usr/bin/wg-quick strip wg0' >> /etc/sudoers.d/vpn-manager-wg
-chmod 440 /etc/sudoers.d/vpn-manager-wg
-```
-
-В `wireguard.py` скрипт вызывается так: `sudo /opt/vpn-manager/scripts/add-wg-client.sh client_name`. Для `revoke_client` используются `sudo wg syncconf` и `wg-quick strip` — строки выше это разрешают.
-
-Если хочешь упростить первый запуск — можно пока запускать uvicorn и бота от root; тогда `sudo` при вызове скрипта сработает без доп. настроек. Позже переведёшь на пользователя `vpnapp`.
+Скрипт `add-wg-client.sh` по умолчанию проверяет `id -u = 0` (root). Если запускаешь без sudo от пользователя `amir`, либо убери эту проверку в своей копии скрипта в `/usr/local/bin/`, либо выдай amir права на запись в `/etc/wireguard` и на выполнение `wg` (например, через группу или setcap).
 
 ### 4.7. Миграции БД
 
@@ -214,6 +204,8 @@ After=network.target postgresql.service
 Type=simple
 User=root
 WorkingDirectory=/opt/vpn-manager
+# Явно подгрузить .env (нужно бэкенду для BOT_TOKEN — отправка сообщений пользователю после подтверждения оплаты)
+EnvironmentFile=/opt/vpn-manager/.env
 Environment=PATH=/opt/vpn-manager/venv/bin
 ExecStart=/opt/vpn-manager/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
@@ -222,6 +214,8 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+
+Важно: без `EnvironmentFile` или без корректного `WorkingDirectory` процесс может не увидеть `BOT_TOKEN` из `.env`, и после подтверждения оплаты пользователь не получит сообщение в Telegram (бот при этом работает, т.к. запускается отдельным процессом со своим чтением `.env`).
 
 Если используешь пользователя `vpnapp`, замени `User=root` на `User=vpnapp`.
 
@@ -352,3 +346,55 @@ systemctl restart vpn-manager vpn-manager-bot
 - **WireGuard:** `WG_SCRIPT_PATH` указывает на скрипт на этом VPS; `SERVER_ENDPOINT` — IP или домен этого сервера; скрипт вызывается через sudo (при необходимости настроен sudoers для пользователя приложения).
 
 После выполнения этой инструкции прод-версия развёрнута на сервере и работает с реальными конфигами WireGuard.
+
+---
+
+## 8. Ошибка при подтверждении оплаты: уведомление и конфиг не приходят
+
+**Симптомы:** после нажатия «Подтвердить» в админке пользователь не получает в Telegram сообщение с выбором конфига, конфиг не работает.
+
+**Причина:** приложение вызывает скрипт WireGuard (`add-wg-client.sh`). Если вызов падает (скрипт не найден, нет прав, ошибка внутри скрипта), конфиг не создаётся и сообщение пользователю не отправляется. Ошибка пишется в логи и в поле «Заметка» подтверждённого платежа в админке.
+
+### Что проверить по шагам
+
+1. **Логи бэкенда** (сразу после подтверждения оплаты):
+   ```bash
+   journalctl -u vpn-manager -n 100 --no-pager
+   ```
+   Ищи строки `[WG] add_client failed:` или `[WG] Script not found at ...` — по ним видно причину.
+
+2. **Админка → подписки/платежи:** открой уже подтверждённый платёж и посмотри поле «Заметка» (admin_notes). Если там есть `[WG error: ...]` — текст после него и есть ошибка (например «Script failed: ...» или «Config file not created»).
+
+3. **Переменные в `.env` на сервере** (без лишних пробелов и кавычек):
+   - `WG_SCRIPT_PATH` — **полный путь** к скрипту, например `/opt/vpn-manager/scripts/add-wg-client.sh`. Путь должен быть таким, как на самом сервере (где лежит проект).
+   - `WG_CLIENTS_DIR=/etc/wireguard/clients` — каталог, куда скрипт пишет `.conf` файлы (должен совпадать с тем, что внутри скрипта).
+   - `WG_CONF_PATH=/etc/wireguard/wg0.conf` — конфиг интерфейса WireGuard.
+   - `SERVER_ENDPOINT` — IP или домен этого VPS (как в конфиге клиента).
+
+4. **Скрипт на месте и запускается вручную:**
+   ```bash
+   ls -la /opt/vpn-manager/scripts/add-wg-client.sh
+   sudo /opt/vpn-manager/scripts/add-wg-client.sh testclient1 82.117.84.212
+   ```
+   Подставь свой `SERVER_ENDPOINT` вместо `82.117.84.212`. Если команда падает — исправь окружение WireGuard (права, ключи, `wg0` поднят). Если выполняется без ошибок — проверь, что в `.env` указан **тот же** путь в `WG_SCRIPT_PATH`.
+
+5. **Права на запуск от пользователя systemd:** бэкенд (uvicorn) запускается от пользователя из `User=` в `vpn-manager.service`. Этот пользователь должен иметь возможность выполнить:
+   ```bash
+   sudo /opt/vpn-manager/scripts/add-wg-client.sh testclient2 $(grep SERVER_ENDPOINT /opt/vpn-manager/.env | cut -d= -f2)
+   ```
+   без ввода пароля. Если пароль спрашивается — настрой sudoers (см. раздел 4.6). Либо временно запускай сервис от root (`User=root` в unit), тогда `sudo` сработает без доп. настроек.
+
+6. **Чтение созданного конфига:** после успешного запуска скрипт создаёт файл в `WG_CLIENTS_DIR`, например `/etc/wireguard/clients/user1_1.conf`. Пользователь, от которого работает uvicorn, должен иметь право **читать** этот каталог и файлы (скрипт создаёт их от root; если uvicorn не root — дай права на чтение: `chmod 755 /etc/wireguard/clients` и на созданные файлы, или запускай uvicorn от root).
+
+### Бот и config.py
+
+- **Отдельный `.env` для бота не нужен.** Бот и бэкенд на одном сервере используют один и тот же каталог и один `.env`. В нём должны быть заполнены и `BOT_TOKEN`, и все переменные для бэкенда.
+- **`config.py` не заполняешь вручную** — он читает настройки из `.env` через pydantic-settings. Достаточно правильного `.env` в корне проекта.
+
+### После исправления
+
+Перезапусти бэкенд и снова подтверди платёж (или создай новую тестовую заявку и подтверди её):
+
+```bash
+systemctl restart vpn-manager
+```

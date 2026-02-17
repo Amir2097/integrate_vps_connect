@@ -16,20 +16,27 @@ class WireGuardService:
         self.clients_dir = Path(settings.wg_clients_dir)
         self.server_endpoint = settings.server_endpoint
         self.wg_port = settings.wg_port
+        self.use_sudo = getattr(settings, "wg_use_sudo", True)
 
     async def add_client(self, client_name: str) -> dict:
         """
         Запускает add-wg-client.sh на сервере и возвращает данные клиента.
         Возвращает: { "allowed_ip", "private_key", "public_key", "config_content", "conf_path" }
         """
-        if not self.script_path or not Path(self.script_path).exists():
+        if not self.script_path:
+            return self._mock_add_client(client_name)
+        script_path = Path(self.script_path)
+        if not script_path.exists():
+            print(f"[WG] Script not found at {self.script_path}, using mock. Check WG_SCRIPT_PATH in .env")
             return self._mock_add_client(client_name)
 
+        # С sudo (по умолчанию) или напрямую, если пользователь процесса имеет права (WG_USE_SUDO=false)
+        if self.use_sudo:
+            cmd = ["sudo", self.script_path, client_name, self.server_endpoint]
+        else:
+            cmd = [self.script_path, client_name, self.server_endpoint]
         proc = await asyncio.create_subprocess_exec(
-            "sudo",
-            self.script_path,
-            client_name,
-            self.server_endpoint,
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env={**__import__("os").environ, "WG_PORT": str(self.wg_port)},
@@ -123,14 +130,15 @@ PersistentKeepalive = 25
                 i += 1
         path.write_text("\n".join(result), encoding="utf-8")
 
+        wg_prefix = ["sudo"] if self.use_sudo else []
         proc = await asyncio.create_subprocess_exec(
-            "sudo", "wg", "syncconf", "wg0", "-",
+            *wg_prefix, "wg", "syncconf", "wg0", "-",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         strip_proc = await asyncio.create_subprocess_exec(
-            "wg-quick", "strip", "wg0",
+            *wg_prefix, "wg-quick", "strip", "wg0",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

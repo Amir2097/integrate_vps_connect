@@ -126,8 +126,20 @@ class SubscriptionService:
             try:
                 data = await wireguard_service.add_client(client_name)
             except Exception as e:
-                payment.admin_notes = (payment.admin_notes or "") + f" [WG error: {e}]"
+                err_msg = str(e)
+                print(f"[WG] add_client failed: {err_msg}")  # в логах systemd (journalctl)
+                payment.admin_notes = (payment.admin_notes or "") + f" [WG error: {err_msg}]"
                 await db.flush()
+                # Уведомить пользователя и админа об ошибке
+                r = await db.execute(select(User).where(User.id == payment.user_id))
+                user = r.scalars().one_or_none()
+                if user and user.telegram_id:
+                    from app.services.telegram_notify import send_message, notify_admin
+                    await send_message(
+                        user.telegram_id,
+                        "⚠️ При создании конфига произошла техническая ошибка. Администратор уведомлён, мы исправим в ближайшее время.",
+                    )
+                    await notify_admin(f"❌ Ошибка WG при подтверждении платежа {payment_id}: {err_msg}")
                 return payment
 
             display_name = (sub.display_name or "").strip() or None
