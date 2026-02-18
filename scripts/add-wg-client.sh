@@ -19,9 +19,13 @@ fi
 # Порт WireGuard (должен совпадать с ListenPort в wg0.conf)
 WG_PORT="${WG_PORT:-51820}"
 
-if [ "$(id -u)" -ne 0 ]; then
-  echo "Запусти скрипт с sudo."
-  exit 1
+# Проверка root (при вызове из systemd/Python PATH может быть пустым — используем полный путь к id)
+# Если задано WG_SKIP_ROOT_CHECK=1 — не требовать root (скрипт запускается от пользователя с правами на WG)
+if [ "${WG_SKIP_ROOT_CHECK}" != "1" ]; then
+  if [ "$(/usr/bin/id -u 2>/dev/null)" != "0" ]; then
+    echo "Запусти скрипт с sudo или задай WG_SKIP_ROOT_CHECK=1 при запуске от пользователя с правами на WireGuard."
+    exit 1
+  fi
 fi
 
 if [ ! -f "$WG_CONF" ]; then

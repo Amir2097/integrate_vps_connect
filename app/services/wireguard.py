@@ -30,16 +30,33 @@ class WireGuardService:
             print(f"[WG] Script not found at {self.script_path}, using mock. Check WG_SCRIPT_PATH in .env")
             return self._mock_add_client(client_name)
 
-        # С sudo (по умолчанию) или напрямую, если пользователь процесса имеет права (WG_USE_SUDO=false)
+        # С sudo (по умолчанию) или напрямую от пользователя процесса (WG_USE_SUDO=false).
+        # Без sudo переменные в env иногда не доходят до скрипта — запускаем через /usr/bin/env.
+        os_environ = __import__("os").environ
+        base_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         if self.use_sudo:
             cmd = ["sudo", self.script_path, client_name, self.server_endpoint]
+            env = {**os_environ, "WG_PORT": str(self.wg_port)}
+            if not env.get("PATH"):
+                env["PATH"] = base_path
         else:
-            cmd = [self.script_path, client_name, self.server_endpoint]
+            # Явно передаём переменные через env, чтобы скрипт точно увидел WG_SKIP_ROOT_CHECK=1
+            cmd = [
+                "/usr/bin/env",
+                f"PATH={base_path}",
+                "WG_SKIP_ROOT_CHECK=1",
+                f"WG_PORT={self.wg_port}",
+                f"SERVER_ENDPOINT={self.server_endpoint}",
+                self.script_path,
+                client_name,
+                self.server_endpoint,
+            ]
+            env = None  # env уже задан в командной строке через /usr/bin/env
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**__import__("os").environ, "WG_PORT": str(self.wg_port)},
+            env=env,
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
