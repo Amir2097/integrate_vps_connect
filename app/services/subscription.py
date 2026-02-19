@@ -48,7 +48,7 @@ class SubscriptionService:
         )
         if r.scalars().first():
             raise ValueError("У вас уже есть заявка, ожидайте подтверждения")
-        # Отменить старые подписки в pending_payment без ожидающего платежа (после отклонения и т.п.)
+        # Отменить только те подписки в pending_payment, у которых нет ожидающего платежа (не трогаем активные заявки)
         r = await db.execute(
             select(Subscription).where(
                 Subscription.user_id == user_id,
@@ -56,7 +56,14 @@ class SubscriptionService:
             )
         )
         for sub in r.scalars().all():
-            sub.status = SubscriptionStatus.cancelled
+            r2 = await db.execute(
+                select(Payment.id).where(
+                    Payment.subscription_id == sub.id,
+                    Payment.status == PaymentStatus.pending,
+                ).limit(1)
+            )
+            if r2.scalars().first() is None:
+                sub.status = SubscriptionStatus.cancelled
         if months not in (1, 3, 5, 12):
             months = 1
         name_clean = (display_name or "").strip()[:128] or None
@@ -140,7 +147,10 @@ class SubscriptionService:
 
         if confirmed and payment.subscription_id:
             r = await db.execute(select(Subscription).where(Subscription.id == payment.subscription_id))
-            sub = r.scalars().one()
+            sub = r.scalars().one_or_none()
+            if not sub:
+                payment.status = PaymentStatus.pending
+                return None
             months = getattr(payment, "subscription_months", 1) or 1
             sub.status = SubscriptionStatus.active
             sub.started_at = datetime.utcnow()
