@@ -31,19 +31,20 @@ class WireGuardService:
             return self._mock_add_client(client_name)
 
         # С sudo (по умолчанию) или напрямую от пользователя процесса (WG_USE_SUDO=false).
-        # Без sudo переменные в env иногда не доходят до скрипта — запускаем через /usr/bin/env.
+        # Sudo не передаёт env в скрипт — передаём флаг «сделать читаемым» третьим аргументом (1).
         os_environ = __import__("os").environ
         base_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         if self.use_sudo:
-            cmd = ["sudo", self.script_path, client_name, self.server_endpoint]
-            env = {
-                **os_environ,
-                "WG_PORT": str(self.wg_port),
-                "WG_CONF": str(self.conf_path),
-                "WG_CLIENTS_DIR": str(self.clients_dir),
-            }
-            if not env.get("PATH"):
-                env["PATH"] = base_path
+            cmd = [
+                "sudo",
+                self.script_path,
+                client_name,
+                self.server_endpoint,
+                "1",  # третий аргумент: скрипт сделает chmod 644, чтобы amir мог прочитать конфиг
+            ]
+            env = None
+            # В логах видно, что третий аргумент "1" передаётся (для отладки прав 644)
+            print(f"[WG] add_client cmd: {' '.join(cmd)}", flush=True)
         else:
             # Явно передаём переменные через env (пути из .env — скрипт может искать конфиг не в /etc/wireguard)
             cmd = [

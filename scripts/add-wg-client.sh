@@ -10,6 +10,8 @@ WG_CONF="${WG_CONF:-/etc/wireguard/wg0.conf}"
 WG_SUBNET="10.66.0"
 CLIENT_NAME="${1:-client}"
 SERVER_ENDPOINT="${2:-$SERVER_ENDPOINT}"
+# Третий аргумент "1" — сделать конфиг читаемым для приложения (chmod 644), когда скрипт вызывается через sudo от amir
+READABLE_BY_APP_ARG="${3:-}"
 WORKDIR="${WG_CLIENTS_DIR:-/etc/wireguard/clients}"
 
 if [ -z "$SERVER_ENDPOINT" ]; then
@@ -91,8 +93,12 @@ PersistentKeepalive = 25
 
 CONF_FILE="$WORKDIR/${CLIENT_NAME}.conf"
 echo "$CLIENT_CONF" > "$CONF_FILE"
-chmod 600 "$CONF_FILE"
-
+# По умолчанию только root. Если скрипт вызывается из приложения (sudo), приложение потом читает файл от пользователя (amir) — тогда делаем читаемым. Поддержка: env WG_READABLE_BY_APP=1 или третий аргумент "1".
+if [ "${WG_READABLE_BY_APP}" = "1" ] || [ "$READABLE_BY_APP_ARG" = "1" ]; then
+  chmod 644 "$CONF_FILE"
+else
+  chmod 600 "$CONF_FILE"
+fi
 echo "----------------------------------------"
 echo "Клиент: $CLIENT_NAME"
 echo "VPN IP:  $CLIENT_IP/32"
