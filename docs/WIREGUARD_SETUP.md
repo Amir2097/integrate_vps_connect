@@ -177,6 +177,95 @@ ufw status
 
 ---
 
+## 5.2 Запуск add-wg-client от пользователя приложения (не root)
+
+Если WireGuard ты настраивал **под root**, то файлы в `/etc/wireguard/` принадлежат root и по умолчанию недоступны другому пользователю (например **amir**, под которым крутится VPN Manager). Скрипт тогда не может прочитать `wg0.conf` и выдаёт: *«Не найден /etc/wireguard/wg0.conf»* — для этого пользователя файл «не существует» из‑за прав доступа.
+
+Ниже: как проверить права, выдать их пользователю приложения и как вручную проверить создание конфига так же, как это делает проект.
+
+### Что нужно пользователю приложения (amir)
+
+- **Читать и дописывать** `/etc/wireguard/wg0.conf` (добавление блоков [Peer]).
+- **Читать и писать** каталог `/etc/wireguard/clients/` (создание файлов вида `user1_1.conf`).
+- **Выполнять** команды `wg` и `wg-quick` (генерация ключей, `wg show wg0`, `wg syncconf`, `wg-quick strip`).
+
+### Проверка прав (под root)
+
+```bash
+# Владелец и права на конфиг и каталог
+sudo ls -la /etc/wireguard/
+sudo ls -la /etc/wireguard/clients/ 2>/dev/null || true
+```
+
+Если везде `root:root` и права типа `600`/`700`, пользователь **amir** доступа не имеет.
+
+### Вариант A: запуск через sudo (рекомендуется, без смены прав в /etc/wireguard)
+
+Не меняя владельца и права в `/etc/wireguard/`, оставь всё как при настройке под root. Приложение будет вызывать скрипт **через sudo**; пользователю приложения (amir) разрешаем без пароля только нужные команды через sudoers:
+
+```bash
+# Разрешить пользователю amir запускать скрипт и команды wg без пароля
+sudo tee /etc/sudoers.d/wireguard-amir << 'EOF'
+amir ALL=(root) NOPASSWD: /usr/local/bin/add-wg-client.sh
+amir ALL=(root) NOPASSWD: /usr/bin/wg syncconf wg0 -
+amir ALL=(root) NOPASSWD: /usr/bin/wg-quick strip wg0
+EOF
+sudo chmod 440 /etc/sudoers.d/wireguard-amir
+```
+
+В **.env** приложения задай:
+
+```env
+WG_USE_SUDO=true
+WG_SCRIPT_PATH=/usr/local/bin/add-wg-client.sh
+```
+
+Сервис (uvicorn) должен запускаться от пользователя **amir** (`User=amir` в systemd). Скрипт будет выполняться от root через sudo, доступ к `wg0.conf` и работа `wg-quick` сохраняются как при ручной настройке.
+
+Проверка от пользователя amir:
+
+```bash
+sudo /usr/local/bin/add-wg-client.sh testfromamir core.dautovtech.ru
+```
+
+Пароль спрашивать не должно.
+
+### Вариант B: группа wireguard (без sudo, сложнее)
+
+Создай группу, отдай ей каталог и конфиг, добавь пользователя приложения. **Минус:** `wg-quick` при применении конфига может требовать root, из‑за чего при запуске от пользователя появляется запрос пароля. Плюс смена прав на `/etc/wireguard/` и `wg0.conf` может повлиять на работу уже поднятого WireGuard или на перезапуск сервиса. Использовать только если ты уверен в настройке.
+
+```bash
+sudo groupadd -f wireguard
+sudo usermod -aG wireguard amir
+sudo chown root:wireguard /etc/wireguard
+sudo chmod 771 /etc/wireguard
+sudo chown root:wireguard /etc/wireguard/wg0.conf
+sudo chmod 660 /etc/wireguard/wg0.conf
+sudo chown root:wireguard /etc/wireguard/clients
+sudo chmod 775 /etc/wireguard/clients
+sudo setcap cap_net_admin+ep /usr/bin/wg
+sudo setcap cap_net_admin+ep /usr/bin/wg-quick
+```
+
+После `usermod -aG wireguard amir` пользователю нужно заново залогиниться.
+
+### Проверка создания конфига (при варианте A — через sudo)
+
+Зайди под пользователем **amir** и выполни (пароль не должен запрашиваться):
+
+```bash
+sudo /usr/local/bin/add-wg-client.sh testfromamir core.dautovtech.ru
+```
+
+В конце должен быть путь к конфигу и QR. Проверь: `ls -la /etc/wireguard/clients/testfromamir.conf`, `sudo wg show`.
+
+### Итог
+
+- **Рекомендуется вариант A (sudo + sudoers):** права в `/etc/wireguard/` не трогаем, скрипт и команды `wg` выполняются от root через sudo без пароля. Так уже поднятые туннели не ломаются.
+- Вариант B (группа wireguard) меняет права на файлы и может повлиять на работу WireGuard; `wg-quick` при запуске не от root может запрашивать пароль.
+
+---
+
 ## 6. Добавление клиента (peer)
 
 ### 6.0 Быстрый способ: скрипт + QR-код (рекомендуется)

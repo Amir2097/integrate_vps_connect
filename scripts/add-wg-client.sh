@@ -5,10 +5,12 @@
 
 set -e
 
-WG_CONF="/etc/wireguard/wg0.conf"
+# Пути можно задать через переменные окружения (при вызове из приложения передаются из .env)
+WG_CONF="${WG_CONF:-/etc/wireguard/wg0.conf}"
 WG_SUBNET="10.66.0"
 CLIENT_NAME="${1:-client}"
 SERVER_ENDPOINT="${2:-$SERVER_ENDPOINT}"
+WORKDIR="${WG_CLIENTS_DIR:-/etc/wireguard/clients}"
 
 if [ -z "$SERVER_ENDPOINT" ]; then
   echo "Укажи IP или домен сервера: $0 <имя_клиента> <IP_или_домен>"
@@ -41,7 +43,6 @@ if grep -q "AllowedIPs = $WG_SUBNET\." "$WG_CONF"; then
 fi
 
 CLIENT_IP="$WG_SUBNET.$NEXT_IP"
-WORKDIR="/etc/wireguard/clients"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 

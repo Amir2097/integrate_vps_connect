@@ -36,17 +36,24 @@ class WireGuardService:
         base_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         if self.use_sudo:
             cmd = ["sudo", self.script_path, client_name, self.server_endpoint]
-            env = {**os_environ, "WG_PORT": str(self.wg_port)}
+            env = {
+                **os_environ,
+                "WG_PORT": str(self.wg_port),
+                "WG_CONF": str(self.conf_path),
+                "WG_CLIENTS_DIR": str(self.clients_dir),
+            }
             if not env.get("PATH"):
                 env["PATH"] = base_path
         else:
-            # Явно передаём переменные через env, чтобы скрипт точно увидел WG_SKIP_ROOT_CHECK=1
+            # Явно передаём переменные через env (пути из .env — скрипт может искать конфиг не в /etc/wireguard)
             cmd = [
                 "/usr/bin/env",
                 f"PATH={base_path}",
                 "WG_SKIP_ROOT_CHECK=1",
                 f"WG_PORT={self.wg_port}",
                 f"SERVER_ENDPOINT={self.server_endpoint}",
+                f"WG_CONF={self.conf_path}",
+                f"WG_CLIENTS_DIR={self.clients_dir}",
                 self.script_path,
                 client_name,
                 self.server_endpoint,
