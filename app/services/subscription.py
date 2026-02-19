@@ -156,6 +156,20 @@ class SubscriptionService:
             sub.started_at = datetime.utcnow()
             sub.expires_at = datetime.utcnow() + timedelta(days=settings.subscription_days * months)
 
+            # Уже есть VpnClient по этой подписке (повторное подтверждение) — только отправить выбор конфига
+            r = await db.execute(
+                select(VpnClient).where(VpnClient.subscription_id == payment.subscription_id).limit(1)
+            )
+            existing_vpn = r.scalars().one_or_none()
+            if existing_vpn:
+                r = await db.execute(select(User).where(User.id == payment.user_id))
+                user = r.scalars().one_or_none()
+                if user and user.telegram_id:
+                    from app.services.telegram_notify import send_activation_choice
+                    await send_activation_choice(user.telegram_id, existing_vpn.id)
+                await db.flush()
+                return payment
+
             # Создать VPN-клиента: вызвать скрипт, сохранить в БД
             client_name = f"user{payment.user_id}_{sub.id}"
             try:
