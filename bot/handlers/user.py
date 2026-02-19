@@ -13,14 +13,8 @@ from app.services.telegram_notify import CONFIG_WARNING, config_to_qr_png, send_
 def _payment_info_text() -> str:
     """Официальный текст реквизитов для оплаты подписки."""
     amount = int(settings.subscription_amount)
-    phone = (settings.payment_phone or "").strip()
-    if phone:
-        recipient = f"на номер телефона <b>{phone}</b>"
-    else:
-        recipient = "на номер телефона (уточните у администратора)"
     return (
-        "<b>Реквизиты для оплаты подписки</b>\n\n"
-        f"Оплата производится переводом {recipient}.\n\n"
+        "<b>Отсканируйте QR код (отправка по СБП)</b>\n\n"
         "В сообщении к переводу <b>ничего не указывайте</b> и не пишите.\n\n"
         f"Стоимость подписки: <b>{amount} ₽ в месяц</b>."
     )

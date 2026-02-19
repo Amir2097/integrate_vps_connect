@@ -154,6 +154,7 @@ async def admin_dashboard(
     base_url = str(request.base_url).rstrip("/")
     sbp_qr_url_hint = f"{base_url}/static/{SBP_QR_FILENAME}" if sbp_qr_exists else ""
 
+    q = request.query_params
     return templates.TemplateResponse(
         "admin_dashboard.html",
         {
@@ -162,8 +163,10 @@ async def admin_dashboard(
             "users_with_subs": users_with_subs,
             "sbp_qr_exists": sbp_qr_exists,
             "sbp_qr_url_hint": sbp_qr_url_hint,
-            "sbp_uploaded": request.query_params.get("sbp_uploaded") == "1",
-            "admin_error": request.query_params.get("error"),
+            "sbp_uploaded": q.get("sbp_uploaded") == "1",
+            "config_blocked": q.get("config_blocked") == "1",
+            "config_unblocked": q.get("config_unblocked") == "1",
+            "admin_error": q.get("error"),
         },
     )
 
@@ -232,7 +235,8 @@ async def admin_block_config(
                 user.telegram_id,
                 f"⛔ Доступ по конфигу <b>«{name}»</b> приостановлен администратором. Остальные конфиги работают.",
             )
-    return RedirectResponse(url="/admin", status_code=302)
+        return RedirectResponse(url="/admin?config_blocked=1", status_code=302)
+    return RedirectResponse(url="/admin?error=config_not_found", status_code=302)
 
 
 @router.post("/configs/{vpn_client_id}/unblock")
@@ -257,7 +261,8 @@ async def admin_unblock_config(
                 user.telegram_id,
                 f"✅ Доступ по конфигу <b>«{name}»</b> снова активен.",
             )
-    return RedirectResponse(url="/admin", status_code=302)
+        return RedirectResponse(url="/admin?config_unblocked=1", status_code=302)
+    return RedirectResponse(url="/admin?error=config_not_found", status_code=302)
 
 
 @router.post("/upload-sbp-qr")

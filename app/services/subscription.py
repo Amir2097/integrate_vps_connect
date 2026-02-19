@@ -113,6 +113,22 @@ class SubscriptionService:
         payment.confirmed_at = datetime.utcnow()
         payment.confirmed_by = admin_user_id
 
+        if not confirmed and payment.subscription_id:
+            r = await db.execute(select(Subscription).where(Subscription.id == payment.subscription_id))
+            sub = r.scalars().one_or_none()
+            if sub:
+                sub.status = SubscriptionStatus.cancelled
+            r = await db.execute(select(User).where(User.id == payment.user_id))
+            user = r.scalars().one_or_none()
+            if user and user.telegram_id:
+                from app.services.telegram_notify import send_message
+                await send_message(
+                    user.telegram_id,
+                    "❌ <b>Оплата не подтверждена.</b>\n\n"
+                    "Если вы уже перевели средства — свяжитесь с поддержкой. "
+                    "Вы можете оформить новую заявку (кнопка «Подключиться») или после повторной оплаты нажать «Я оплатил».",
+                )
+
         if confirmed and payment.subscription_id:
             r = await db.execute(select(Subscription).where(Subscription.id == payment.subscription_id))
             sub = r.scalars().one()

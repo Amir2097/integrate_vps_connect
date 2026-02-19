@@ -8,38 +8,70 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #0d1117;
-            --bg-card: #161b22;
-            --border: #30363d;
-            --text: #e6edf3;
-            --text-muted: #8b949e;
-            --accent: #58a6ff;
-            --success: #3fb950;
-            --danger: #f85149;
-            --warning: #d29922;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
         }
         body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); }
-        .navbar { background: var(--bg-card) !important; border-bottom: 1px solid var(--border); }
-        .navbar-brand, .navbar .btn { color: var(--text) !important; }
-        .navbar .btn-outline-light { border-color: var(--border); color: var(--text-muted); }
-        .navbar .btn-outline-light:hover { border-color: var(--accent); color: var(--accent); }
-        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; }
+        .navbar {
+            background: var(--card) !important;
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+        .navbar-brand { font-weight: 600; color: var(--text) !important; }
+        .navbar .btn-outline-light {
+            border-color: var(--border);
+            color: var(--text-muted);
+        }
+        .navbar .btn-outline-light:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            background: rgba(99, 102, 241, 0.08);
+        }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
         .table { color: var(--text); }
-        .table th { color: var(--text-muted); font-weight: 500; border-color: var(--border); }
-        .table td { border-color: var(--border); }
-        .table-striped tbody tr:nth-of-type(odd) { background: rgba(255,255,255,0.02); }
+        .table th {
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            border-color: var(--border);
+        }
+        .table td { border-color: var(--border); vertical-align: middle; }
+        .table-striped tbody tr:nth-of-type(odd) { background: rgba(0,0,0,0.02); }
         .badge { font-weight: 500; }
-        .form-control, .form-control:focus { background: var(--bg); border-color: var(--border); color: var(--text); }
+        .form-control, .form-control:focus {
+            border-color: var(--border);
+            border-radius: 8px;
+        }
+        .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12); }
         .btn-success { background: var(--success); border-color: var(--success); }
         .btn-outline-danger { border-color: var(--danger); color: var(--danger); }
         .btn-outline-warning { border-color: var(--warning); color: var(--warning); }
+        .btn-primary { background: var(--primary); border-color: var(--primary); }
+        .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
         h1, h2 { font-weight: 600; color: var(--text); }
         .text-muted { color: var(--text-muted) !important; }
-        .section-title { font-size: 0.95rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; }
+        .section-title { font-size: 0.9rem; font-weight: 600; color: var(--text); margin-top: 1.5rem; margin-bottom: 0.75rem; }
+        .alert-success { background: #ecfdf5; border-color: #a7f3d0; color: #047857; border-radius: 10px; }
+        .alert-danger { background: #fef2f2; border-color: #fecaca; color: #b91c1c; border-radius: 10px; }
     </style>
 </head>
-<body class="bg-dark">
-    <nav class="navbar navbar-dark">
+<body>
+    <nav class="navbar navbar-light">
         <div class="container">
             <a class="navbar-brand" href="/admin">VPN Admin</a>
             <a class="btn btn-outline-light btn-sm" href="/admin">Дашборд</a>
