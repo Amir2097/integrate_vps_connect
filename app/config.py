@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     subscription_amount: float = 100.0  # сумма за один конфиг (₽), для отображения в админке и боте
     # Номер телефона для перевода (СБП/банк). Если пусто — в боте пишем «уточните у администратора»
     payment_phone: str = ""
+    # Публичный URL QR-кода СБП для оплаты (например https://yourdomain.com/static/sbp_qr.png). Если задан — в боте реквизиты отправляются фото с подписью.
+    payment_sbp_qr_url: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

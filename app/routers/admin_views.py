@@ -6,7 +6,7 @@ import secrets
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request, Form
+from fastapi import APIRouter, Depends, Request, Form, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -20,7 +20,9 @@ from app.services.telegram_notify import send_message
 
 router = APIRouter(prefix="/admin", tags=["admin-panel"])
 _templates_dir = Path(__file__).resolve().parent.parent / "templates"
+_static_dir = Path(__file__).resolve().parent.parent / "static"
 templates = Jinja2Templates(directory=str(_templates_dir))
+SBP_QR_FILENAME = "sbp_qr.png"
 
 # Простые сессии в памяти: session_id -> время создания (истекают через 24 ч)
 _admin_sessions: dict[str, float] = {}
@@ -121,12 +123,48 @@ async def admin_dashboard(
     )
     subs_with_users = [{"sub": s, "user": u, "vpn_client": vc} for s, u, vc in r2.all()]
 
-    r3 = await db.execute(select(User).order_by(User.id))
-    users_list = list(r3.scalars().all())
+    r3 = await db.execute(select(Payment).where(Payment.subscription_id.isnot(None)))
+    sub_amount_map = {}
+    for p in r3.scalars().all():
+        if p.subscription_id:
+            sub_amount_map[p.subscription_id] = float(p.amount)
+
+    r4 = await db.execute(select(User).order_by(User.id))
+    users_list = list(r4.scalars().all())
+
+    subs_by_user: dict[int, list] = {}
+    for item in subs_with_users:
+        uid = item["user"].id
+        if uid not in subs_by_user:
+            subs_by_user[uid] = []
+        subs_by_user[uid].append({
+            "sub": item["sub"],
+            "vpn_client": item["vpn_client"],
+            "amount": sub_amount_map.get(item["sub"].id),
+        })
+
+    users_with_subs = []
+    for u in users_list:
+        users_with_subs.append({
+            "user": u,
+            "subscriptions": subs_by_user.get(u.id, []),
+        })
+
+    sbp_qr_exists = (_static_dir / SBP_QR_FILENAME).exists()
+    base_url = str(request.base_url).rstrip("/")
+    sbp_qr_url_hint = f"{base_url}/static/{SBP_QR_FILENAME}" if sbp_qr_exists else ""
 
     return templates.TemplateResponse(
         "admin_dashboard.html",
-        {"request": request, "pending_payments": pending, "subscriptions": subs_with_users, "users_list": users_list},
+        {
+            "request": request,
+            "pending_payments": pending,
+            "users_with_subs": users_with_subs,
+            "sbp_qr_exists": sbp_qr_exists,
+            "sbp_qr_url_hint": sbp_qr_url_hint,
+            "sbp_uploaded": request.query_params.get("sbp_uploaded") == "1",
+            "admin_error": request.query_params.get("error"),
+        },
     )
 
 
@@ -220,6 +258,23 @@ async def admin_unblock_config(
                 f"✅ Доступ по конфигу <b>«{name}»</b> снова активен.",
             )
     return RedirectResponse(url="/admin", status_code=302)
+
+
+@router.post("/upload-sbp-qr")
+async def admin_upload_sbp_qr(
+    request: Request,
+    file: UploadFile = Form(...),
+):
+    """Загрузить QR-код СБП для оплаты. Сохраняется в static/sbp_qr.png. В .env укажите PAYMENT_SBP_QR_URL=https://ваш-домен/static/sbp_qr.png"""
+    if not _is_admin_session(request):
+        return RedirectResponse(url="/admin/login", status_code=302)
+    _static_dir.mkdir(parents=True, exist_ok=True)
+    path = _static_dir / SBP_QR_FILENAME
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:  # 5 MB
+        return RedirectResponse(url="/admin?error=file_too_large", status_code=302)
+    path.write_bytes(content)
+    return RedirectResponse(url="/admin?sbp_uploaded=1", status_code=302)
 
 
 @router.post("/payments/{payment_id}/confirm")

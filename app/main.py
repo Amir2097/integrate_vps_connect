@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -34,7 +36,7 @@ async def run_expiry_reminders():
                 exp_date = sub.expires_at.strftime("%d.%m.%Y") if sub.expires_at else "—"
                 text = (
                     f"Напоминание: ваша VPN-подписка истекает через 3 дня ({exp_date}). "
-                    "Для продления создайте новую заявку: «Подключиться к VPN»."
+                    "Для продления создайте новую заявку: «Подключиться»."
                 )
                 await send_message(user.telegram_id, text)
         except Exception as e:
@@ -62,6 +64,10 @@ app.include_router(admin_api.router)
 app.include_router(internal_api.router)
 app.include_router(admin_views.router)
 app.include_router(auth_router)
+
+_static_dir = Path(__file__).resolve().parent / "static"
+_static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 @app.get("/")

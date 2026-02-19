@@ -46,7 +46,6 @@ class CreatePaymentResponse(BaseModel):
 async def create_payment_request(data: CreatePaymentRequest, db: AsyncSession = Depends(get_db)):
     from sqlalchemy import select
     from app.models import User as UserModel
-    from app.services.telegram_notify import notify_admin_payment_buttons
 
     if data.telegram_id is not None:
         user = await subscription_service.get_or_create_user(db, data.telegram_id)
@@ -65,19 +64,7 @@ async def create_payment_request(data: CreatePaymentRequest, db: AsyncSession = 
     except ValueError as e:
         raise HTTPException(400, str(e))
     await db.commit()
-    if user:
-        name = user.full_name or "—"
-        username = f"@{user.telegram_username}" if user.telegram_username else "—"
-        months = getattr(payment, "subscription_months", 1)
-        amount = float(payment.amount)
-        await notify_admin_payment_buttons(
-            payment.id,
-            f"🆕 <b>Новая заявка на VPN</b>\n"
-            f"Кто: {name} ({username})\n"
-            f"Telegram ID: <code>{user.telegram_id}</code>\n"
-            f"Срок: {months} мес., сумма: {amount:.0f} ₽\n"
-            f"Подтвердите оплату кнопкой ниже или в админке.",
-        )
+    # Админ уведомляется только после нажатия пользователем «Я оплатил» (admin-notify-payment).
     return CreatePaymentResponse(subscription_id=sub.id, payment_id=payment.id)
 
 
