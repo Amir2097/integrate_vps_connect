@@ -119,5 +119,9 @@ else
   echo "Или скачай конфиг и сгенерируй QR на ПК."
 fi
 
+# Для приложения: вывести ключ и IP клиента (в .conf в [Peer] — ключ сервера, не клиента)
+echo "WG_CLIENT_PUBLIC_KEY=$CLIENT_PUBLIC"
+echo "WG_CLIENT_IP=$CLIENT_IP"
+
 echo ""
 echo "Готово. Конфиг для ручной выдачи: $CONF_FILE"

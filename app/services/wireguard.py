@@ -70,6 +70,12 @@ class WireGuardService:
         if proc.returncode != 0:
             raise RuntimeError(f"Script failed: {stderr.decode() or stdout.decode()}")
 
+        out = stdout.decode("utf-8", errors="replace")
+
+        # В клиентском .conf в [Peer] записан PublicKey сервера, не клиента — ключ клиента скрипт выводит в stdout
+        public_key = self._parse_stdout_key(out, "WG_CLIENT_PUBLIC_KEY")
+        allowed_ip_from_stdout = self._parse_stdout_key(out, "WG_CLIENT_IP")
+
         # Читаем созданный конфиг
         conf_file = self.clients_dir / f"{client_name}.conf"
         if not conf_file.exists():
@@ -77,10 +83,13 @@ class WireGuardService:
 
         config_content = conf_file.read_text(encoding="utf-8", errors="replace")
 
-        # Парсим ключи и IP из конфига
         private_key = self._extract(config_content, "PrivateKey")
-        public_key = self._extract(config_content, "PublicKey", section="Peer")
-        allowed_ip = self._extract(config_content, "Address").split("/")[0]
+        allowed_ip_from_conf = self._extract(config_content, "Address").split("/")[0]
+        allowed_ip = allowed_ip_from_stdout or allowed_ip_from_conf
+        if not public_key:
+            raise RuntimeError(
+                "Could not get client public key. Update add-wg-client.sh: script must echo WG_CLIENT_PUBLIC_KEY=..."
+            )
 
         return {
             "allowed_ip": allowed_ip,
@@ -89,6 +98,15 @@ class WireGuardService:
             "config_content": config_content,
             "conf_path": str(conf_file),
         }
+
+    def _parse_stdout_key(self, stdout: str, key: str) -> str:
+        """Из вывода скрипта извлечь значение KEY=value (одна строка)."""
+        prefix = key + "="
+        for line in stdout.splitlines():
+            line = line.strip()
+            if line.startswith(prefix):
+                return line[len(prefix) :].strip()
+        return ""
 
     def _extract(self, config: str, key: str, section: str = "Interface") -> str:
         in_section = False

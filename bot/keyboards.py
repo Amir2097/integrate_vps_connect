@@ -5,7 +5,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text="🔗 Подключиться"),
-                KeyboardButton(text="✅ Я оплатил"),
+                KeyboardButton(text="✅ Я оплатил(а)"),
                 KeyboardButton(text="📋 Моя подписка"),
             ],
             [
