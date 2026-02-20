@@ -17,6 +17,7 @@ from app.auth import verify_password
 from app.config import settings
 from app.models import User, Payment, PaymentStatus, Subscription, VpnClient
 from app.services.telegram_notify import send_message
+from app.services.wireguard import wireguard_service
 
 router = APIRouter(prefix="/admin", tags=["admin-panel"])
 _templates_dir = Path(__file__).resolve().parent.parent / "templates"
@@ -227,13 +228,17 @@ async def admin_block_config(
     row = r.one_or_none()
     if row:
         vpn_client, user = row
+        try:
+            await wireguard_service.revoke_client(vpn_client.wg_public_key)
+        except Exception as e:
+            print(f"[admin] revoke_client failed: {e}", flush=True)
         vpn_client.is_blocked = True
         await db.commit()
         name = (vpn_client.display_name or vpn_client.name or "конфиг").strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         if user.telegram_id:
             await send_message(
                 user.telegram_id,
-                f"⛔ Доступ по конфигу <b>«{name}»</b> приостановлен администратором. Остальные конфиги работают.",
+                f"⛔ Доступ по конфигу <b>«{name}»</b> приостановлен администратором. Туннель на сервере отключён. Остальные конфиги работают.",
             )
         return RedirectResponse(url="/admin?config_blocked=1", status_code=302)
     return RedirectResponse(url="/admin?error=config_not_found", status_code=302)
@@ -253,13 +258,18 @@ async def admin_unblock_config(
     row = r.one_or_none()
     if row:
         vpn_client, user = row
+        try:
+            await wireguard_service.restore_client(vpn_client.wg_public_key, vpn_client.allowed_ip)
+        except Exception as e:
+            print(f"[admin] restore_client failed: {e}", flush=True)
+            return RedirectResponse(url="/admin?error=restore_failed", status_code=302)
         vpn_client.is_blocked = False
         await db.commit()
         name = (vpn_client.display_name or vpn_client.name or "конфиг").strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         if user.telegram_id:
             await send_message(
                 user.telegram_id,
-                f"✅ Доступ по конфигу <b>«{name}»</b> снова активен.",
+                f"✅ Доступ по конфигу <b>«{name}»</b> снова активен. Туннель на сервере включён.",
             )
         return RedirectResponse(url="/admin?config_unblocked=1", status_code=302)
     return RedirectResponse(url="/admin?error=config_not_found", status_code=302)

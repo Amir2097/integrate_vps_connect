@@ -188,5 +188,41 @@ PersistentKeepalive = 25
         strip_out, _ = await strip_proc.communicate()
         await proc.communicate(input=strip_out)
 
+    async def restore_client(self, public_key: str, allowed_ip: str) -> None:
+        """
+        Восстанавливает peer в wg0.conf (после разблокировки админом).
+        Добавляет блок [Peer] с PublicKey и AllowedIPs и применяет конфиг.
+        """
+        if not self.conf_path or not Path(self.conf_path).exists():
+            return  # мок: ничего не делаем
+        path = Path(self.conf_path)
+        allowed = allowed_ip.strip()
+        if allowed and "/" not in allowed:
+            allowed = f"{allowed}/32"
+        peer_block = f"""
+[Peer]
+# restored
+PublicKey = {public_key}
+AllowedIPs = {allowed}
+"""
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if public_key in text:
+            return  # уже есть (например, не удалялся)
+        path.write_text(text.rstrip() + "\n" + peer_block.lstrip(), encoding="utf-8")
+        wg_prefix = ["sudo"] if self.use_sudo else []
+        strip_proc = await asyncio.create_subprocess_exec(
+            *wg_prefix, "wg-quick", "strip", "wg0",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        strip_out, _ = await strip_proc.communicate()
+        proc = await asyncio.create_subprocess_exec(
+            *wg_prefix, "wg", "syncconf", "wg0", "-",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate(input=strip_out)
+
 
 wireguard_service = WireGuardService()

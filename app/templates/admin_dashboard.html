@@ -12,6 +12,9 @@
 {% if admin_error == 'config_not_found' %}
 <div class="alert alert-danger py-2 small">Конфиг не найден.</div>
 {% endif %}
+{% if admin_error == 'restore_failed' %}
+<div class="alert alert-danger py-2 small">Не удалось включить конфиг на сервере (проверьте логи).</div>
+{% endif %}
 {% if sbp_uploaded %}
 <div class="alert alert-success py-2 small">QR СБП загружен. Укажите в .env: <code>PAYMENT_SBP_QR_URL={{ sbp_qr_url_hint }}</code></div>
 {% endif %}
@@ -76,7 +79,7 @@
 
 <section class="card p-3">
     <div class="section-title">Пользователи и подписки</div>
-    <p class="text-muted small mb-2">Отключение конфига скрывает выдачу в боте («Получить конфиг»); пользователь получит уведомление в Telegram. Туннель на сервере может оставаться активным до отключения у пользователя.</p>
+    <p class="text-muted small mb-2">Отключение конфига удаляет peer из WireGuard на сервере — клиент сразу теряет доступ. Включение снова добавляет peer на сервер. При истечении подписки конфиг также отключается на сервере.</p>
     <div class="table-responsive">
         <table class="table table-striped table-sm mb-0">
             <thead>
