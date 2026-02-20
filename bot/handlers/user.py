@@ -110,7 +110,7 @@ async def connect_vpn_choose_months(callback: CallbackQuery, state: FSMContext):
     await state.update_data(months=months)
     await state.set_state(ConnectVPN.wait_config_name)
     await callback.message.answer(
-        "✏️ Введите название конфига на любом языке (например: Телефон, Ноутбук) — так вам будет проще выбирать конфиг потом. "
+        "✏️ Введите название конфига на любом языке (например: Для себя, Новый) — так вам будет проще выбирать конфиг потом. "
         "Или отправьте «-» чтобы пропустить."
     )
 
@@ -188,7 +188,7 @@ async def i_paid_callback(callback: CallbackQuery):
             pass
 
 
-@router.message(F.text.in_(["Я оплатил", "✅ Я оплатил"]))
+@router.message(F.text.in_(["Я оплатил", "Я оплатил(а)", "✅ Я оплатил", "✅ Я оплатил(а)"]))
 async def i_paid(message: Message):
     await message.answer(
         "Ожидайте подтверждения от администратора. После подтверждения оплаты "
@@ -218,8 +218,29 @@ def _fmt_date(iso_date: str | None) -> str:
         return iso_date[:10] or "—"
 
 
-@router.message(F.text.in_(["Моя подписка", "📋 Моя подписка"]))
-async def my_subscription(message: Message):
+def _subscription_status_text(s: dict) -> str:
+    """Текст одной подписки: название и статус/дата."""
+    name = s.get("display_name") or f"Конфиг #{s.get('id', '?')}"
+    status = s.get("status", "")
+    is_blocked = s.get("is_blocked", False)
+    if is_blocked and status == "active":
+        return f"• <b>{name}</b>: доступ приостановлен администратором"
+    if status == "pending_payment":
+        return f"• <b>{name}</b>: ожидает подтверждения оплаты"
+    if status == "active":
+        exp = _fmt_date(s.get("expires_at"))
+        return f"• <b>{name}</b>: активна до {exp}"
+    if status == "expired":
+        exp = _fmt_date(s.get("expires_at"))
+        return f"• <b>{name}</b>: истекла {exp}"
+    if status == "blocked":
+        return f"• <b>{name}</b>: доступ приостановлен администратором"
+    return f"• <b>{name}</b>: {status}"
+
+
+@router.message(F.text.in_(["Мои подписки", "📋 Мои подписки"]))
+async def my_subscriptions(message: Message):
+    """Показать все подписки; для каждой с конфигом — кнопки «Текст конфига» и «QR-код»."""
     try:
         items = await _api("GET", f"/api/user/by-telegram/{message.from_user.id}/subscriptions")
     except Exception:
@@ -228,70 +249,30 @@ async def my_subscription(message: Message):
     if not items:
         await message.answer("У вас пока нет подписок. Нажмите «Подключиться».")
         return
-    lines = []
+    await message.answer("📋 <b>Ваши подписки</b>\n\nНиже — каждая подписка. Если конфиг уже выдан, под сообщением есть кнопки для получения конфига в нужном формате.")
     for s in items:
-        name = s.get("display_name") or f"Конфиг #{s.get('id', '?')}"
-        status = s.get("status", "")
-        is_blocked = s.get("is_blocked", False)
-        if is_blocked and status == "active":
-            lines.append(f"• <b>{name}</b>: доступ приостановлен администратором")
-        elif status == "pending_payment":
-            lines.append(f"• <b>{name}</b>: ожидает подтверждения оплаты")
-        elif status == "active":
-            exp = _fmt_date(s.get("expires_at"))
-            lines.append(f"• <b>{name}</b>: активна до {exp}")
-        elif status == "expired":
-            exp = _fmt_date(s.get("expires_at"))
-            lines.append(f"• <b>{name}</b>: истекла {exp}")
-        elif status == "blocked":
-            lines.append(f"• <b>{name}</b>: доступ приостановлен администратором")
+        text = _subscription_status_text(s)
+        vpn_client_id = s.get("vpn_client_id")
+        if vpn_client_id:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Текст конфига (файл)", callback_data=f"cfg:txt:{vpn_client_id}"),
+                    InlineKeyboardButton(text="QR-код", callback_data=f"cfg:qr:{vpn_client_id}"),
+                ],
+            ])
+            await message.answer(text, reply_markup=kb)
         else:
-            lines.append(f"• <b>{name}</b>: {status}")
-    await message.answer("📋 Ваши подписки:\n\n" + "\n".join(lines))
+            await message.answer(text)
 
 
-def _config_format_keyboard(vpn_client_id: int | None = None) -> InlineKeyboardMarkup:
-    suffix = f":{vpn_client_id}" if vpn_client_id is not None else ""
+def _config_format_keyboard(vpn_client_id: int) -> InlineKeyboardMarkup:
+    """Кнопки «Текст конфига» / «QR-код» для выбранного конфига (используется в cfg_sel)."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Текст конфига (файл)", callback_data=f"cfg:txt{suffix}"),
-            InlineKeyboardButton(text="QR-код", callback_data=f"cfg:qr{suffix}"),
+            InlineKeyboardButton(text="Текст конфига (файл)", callback_data=f"cfg:txt:{vpn_client_id}"),
+            InlineKeyboardButton(text="QR-код", callback_data=f"cfg:qr:{vpn_client_id}"),
         ],
     ])
-
-
-@router.message(F.text.in_(["Получить конфиг", "📥 Получить конфиг"]))
-async def get_config(message: Message):
-    try:
-        configs = await _api("GET", f"/api/user/by-telegram/{message.from_user.id}/vpn-configs")
-    except Exception:
-        await message.answer("Ошибка запроса.")
-        return
-    if not configs:
-        await message.answer(
-            "Конфиг недоступен. Если вы уже получали конфиг ранее, возможно, доступ приостановлен администратором. "
-            "Обратитесь в поддержку."
-        )
-        return
-    if len(configs) == 1:
-        cid = configs[0]["id"]
-        await message.answer(
-            "Выберите формат выдачи конфига:",
-            reply_markup=_config_format_keyboard(cid),
-        )
-        return
-    # Несколько конфигов — выбор по удобному названию
-    buttons = [
-        [InlineKeyboardButton(
-            text=c.get("display_name") or c.get("name") or f"Конфиг #{i+1}",
-            callback_data=f"cfg_sel:{c['id']}",
-        )]
-        for i, c in enumerate(configs)
-    ]
-    await message.answer(
-        "У вас несколько конфигов. Выберите, какой получить:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
 
 
 @router.callback_query(F.data.startswith("confirm_pay:") | F.data.startswith("reject_pay:"))
@@ -466,7 +447,7 @@ async def send_config_qr(callback: CallbackQuery):
 
 
 INSTALL_INSTRUCTIONS = """
-<b>Инструкция по установке WireGuard</b>
+<b>Инструкция по установке WireGuard на устройство</b>
 
 <b>1. Установите приложение WireGuard</b>
 • Телефон: <a href="https://apps.apple.com/app/wireguard/id1441195209">iOS</a> или <a href="https://play.google.com/store/apps/details?id=com.wireguard.android">Android</a>
@@ -474,28 +455,63 @@ INSTALL_INSTRUCTIONS = """
 • macOS: App Store или wireguard.com/install
 
 <b>2. Получите конфиг</b>
-После подтверждения оплаты администратором вы получите в этот чат:
-• текст конфига — можно скопировать целиком;
-• или QR-код — удобно для телефона (сканируйте камерой в приложении).
-
-Кнопка «Получить конфиг» — повторно запросить конфиг, если уже получили его ранее.
+После подтверждения оплаты администратором вы получите в чат выбор формата (текст или QR). Конфиг можно в любой момент запросить снова: раздел <b>«Мои подписки»</b> — у каждой подписки есть кнопки «Текст конфига» и «QR-код».
 
 <b>3. Добавьте туннель</b>
-• <b>Телефон:</b> Откройте WireGuard → «Добавить туннель» → «Создать из QR-кода» (если прислали QR) или «Создать из файла или архива» / вставьте конфиг из буфера.
-• <b>ПК:</b> Импорт туннелей из файла (.conf) или вставка конфига из буфера.
+• <b>Телефон:</b> WireGuard → «Добавить туннель» → «Создать из QR-кода» или вставьте конфиг из буфера.
+• <b>ПК:</b> Импорт из файла (.conf) или вставка конфига из буфера.
 
 <b>4. Подключитесь</b>
-Включите туннель переключателем. После подключения весь трафик идёт через VPN.
+Включите туннель переключателем. Весь трафик пойдёт через VPN.
 
-Если конфиг не подключается — проверьте интернет и что подписка активна («Моя подписка»).
+Если конфиг не подключается — проверьте интернет и что подписка активна («Мои подписки»).
+"""
+
+BOT_USAGE_INSTRUCTIONS = """
+<b>Как пользоваться ботом</b>
+
+<b>🔗 Подключиться</b> — оформить новую подписку: выбрать срок, придумать название конфига (например «Телефон»), затем перевести оплату и нажать «Я оплатил(а)». После подтверждения администратором придёт сообщение с выбором формата конфига (текст или QR).
+
+<b>✅ Я оплатил(а)</b> — нажать после того, как вы перевели деньги. Администратор получит уведомление и подтвердит оплату. Затем вам придёт конфиг.
+
+<b>📋 Мои подписки</b> — список всех ваших подписок: по каждой видно статус (активна до даты / ожидает оплаты / истекла). Если конфиг уже выдан, под сообщением подписки есть кнопки «Текст конфига (файл)» и «QR-код» — нажмите нужную, чтобы получить конфиг в этом формате.
+
+<b>📖 Инструкции</b> — этот раздел: установка VPN на устройство и подсказки по боту.
+
+Реквизиты для оплаты администратор пришлёт отдельно (например, после нажатия «Подключиться» или по запросу).
 """
 
 
+def _instructions_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Установка VPN на устройство", callback_data="help:install"),
+            InlineKeyboardButton(text="Как пользоваться ботом", callback_data="help:bot"),
+        ],
+    ])
+
+
+@router.message(F.text.in_(["Инструкции", "📖 Инструкции"]))
+async def instructions_menu(message: Message):
+    await message.answer(
+        "Выберите инструкцию:",
+        reply_markup=_instructions_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "help:install")
+async def help_install(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(INSTALL_INSTRUCTIONS, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "help:bot")
+async def help_bot(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(BOT_USAGE_INSTRUCTIONS, parse_mode="HTML")
+
+
+# Реквизиты: оставлены для совместимости (если админ пришлёт ссылку/напоминание с этой фразой)
 @router.message(F.text.in_(["Реквизиты для оплаты", "💳 Реквизиты для оплаты"]))
 async def payment_info(message: Message):
     await _send_payment_info(message, _payment_info_text())
-
-
-@router.message(F.text.in_(["Инструкция по установке", "📖 Инструкция по установке"]))
-async def install_instructions(message: Message):
-    await message.answer(INSTALL_INSTRUCTIONS, parse_mode="HTML")

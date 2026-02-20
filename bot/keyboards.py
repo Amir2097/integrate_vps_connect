@@ -6,12 +6,10 @@ def main_keyboard() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text="🔗 Подключиться"),
                 KeyboardButton(text="✅ Я оплатил(а)"),
-                KeyboardButton(text="📋 Моя подписка"),
             ],
             [
-                KeyboardButton(text="📥 Получить конфиг"),
-                KeyboardButton(text="💳 Реквизиты для оплаты"),
-                KeyboardButton(text="📖 Инструкция по установке"),
+                KeyboardButton(text="📋 Мои подписки"),
+                KeyboardButton(text="📖 Инструкции"),
             ],
         ],
         resize_keyboard=True,

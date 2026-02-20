@@ -241,6 +241,7 @@ class SubscriptionService:
                 "expires_at": s.expires_at.isoformat() if s.expires_at else None,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "is_blocked": vc.is_blocked if vc else False,
+                "vpn_client_id": vc.id if vc and not vc.is_blocked else None,
             }
             for i, (s, vc) in enumerate(rows)
         ]

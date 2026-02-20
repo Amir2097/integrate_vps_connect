@@ -119,6 +119,8 @@ async def get_subscriptions_by_telegram(telegram_id: int, db: AsyncSession = Dep
     items = await subscription_service.get_user_subscriptions_list(db, user.id)
     for item in items:
         item["is_blocked"] = user.is_blocked
+        if user.is_blocked:
+            item["vpn_client_id"] = None
     return items
 
 
