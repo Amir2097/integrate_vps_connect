@@ -2,10 +2,17 @@
 
 ## 1. База данных
 
-**Если БД уже существует** — выполните миграции для новых колонок:
+**Если после обновления кода выдаёт 500 при выдаче конфига** или ошибки про отсутствующие колонки — выполните один раз (из корня проекта, с активированным venv):
 
 ```bash
-# Из корня проекта (по порядку):
+python scripts/migrations/run_all_migrations.py
+```
+
+Скрипт добавит все недостающие колонки. После этого перезапустите бэкенд и бота.
+
+**Если предпочитаете psql** — выполните миграции по порядку:
+
+```bash
 psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f scripts/migrations/add_display_name.sql
 psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f scripts/migrations/add_user_is_blocked.sql
 psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f scripts/migrations/add_payment_months_vpn_block.sql
@@ -45,3 +52,19 @@ psql "postgresql://USER:PASSWORD@HOST:PORT/DATABASE" -f scripts/migrations/add_p
 - при активации подписки пользователь получит выбор «Текст конфига» / «QR-код»;
 - при «Подключиться к VPN» бот спросит название конфига;
 - «Моя подписка» покажет список всех подписок с датами и статусами.
+
+---
+
+## 4. Очистка БД от тестовых данных
+
+Чтобы удалить все заявки, конфиги и подписки (и при необходимости пользователей):
+
+```bash
+# Удалить только платежи, VPN-клиентов и подписки (пользователи остаются):
+python scripts/migrations/clean_db.py --yes
+
+# Полная очистка, включая пользователей:
+python scripts/migrations/clean_db.py --users --yes
+```
+
+Без `--yes` скрипт запросит подтверждение.
