@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Веб-сервисы</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --bg-card: #1e293b;
+            --bg-card-hover: #334155;
+            --border: #334155;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --accent-hover: #7dd3fc;
+            --success: #34d399;
+            --card-radius: 16px;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            margin: 0;
+        }
+        .navbar {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+        }
+        .navbar-brand {
+            font-weight: 700;
+            color: var(--text) !important;
+            letter-spacing: -0.02em;
+        }
+        .navbar .btn-ghost {
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        .navbar .btn-ghost:hover {
+            color: var(--accent);
+            border-color: var(--accent);
+            background: rgba(56, 189, 248, 0.08);
+        }
+        .hero {
+            padding: 4rem 0 3rem;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: clamp(1.75rem, 4vw, 2.25rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 0.5rem;
+        }
+        .hero p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+        .services {
+            padding-bottom: 4rem;
+        }
+        .service-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--card-radius);
+            padding: 1.5rem 1.75rem;
+            height: 100%;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .service-card:hover {
+            border-color: var(--accent);
+            background: var(--bg-card-hover);
+        }
+        .service-card .title {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-bottom: 0.35rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .service-card .title .icon {
+            width: 2rem;
+            height: 2rem;
+            border-radius: 10px;
+            background: rgba(56, 189, 248, 0.2);
+            color: var(--accent);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+        }
+        .service-card .desc {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 1.25rem;
+            line-height: 1.5;
+        }
+        .service-card .btn-primary-custom {
+            background: var(--accent);
+            color: var(--bg);
+            border: none;
+            border-radius: 10px;
+            padding: 0.5rem 1rem;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            transition: background 0.2s, transform 0.1s;
+        }
+        .service-card .btn-primary-custom:hover {
+            background: var(--accent-hover);
+            color: var(--bg);
+            transform: translateY(-1px);
+        }
+        .service-card .btn-outline-custom {
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: 10px;
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        .service-card .btn-outline-custom:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .service-card .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .footer {
+            padding: 2rem 0;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+        }
+        .badge-new {
+            background: rgba(52, 211, 153, 0.2);
+            color: var(--success);
+            font-size: 0.7rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">Сервисы</a>
+            <div class="d-flex gap-2">
+                <a class="btn btn-ghost btn-sm" href="/admin">Вход в админку</a>
+                <a class="btn btn-ghost btn-sm" href="/docs">API Docs</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <section class="hero">
+            <h1>Веб-сервисы</h1>
+            <p>Выберите сервис для управления или перейдите в админ-панель</p>
+        </section>
+
+        <section class="services">
+            <div class="row g-4">
+                <div class="col-md-6 col-lg-4">
+                    <div class="service-card">
+                        <div class="title">
+                            <span class="icon">🔒</span>
+                            VPN Manager
+                            <span class="badge-new ms-auto">активен</span>
+                        </div>
+                        <p class="desc">
+                            Управление VPN-подписками: WireGuard, Telegram-бот, приём оплат и выдача конфигов. Подтверждение оплаты в админке или из уведомлений.
+                        </p>
+                        <div class="actions">
+                            <a href="/admin" class="btn-primary-custom">Вход в админку</a>
+                            <a href="/docs" class="btn-outline-custom">API Docs</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="service-card">
+                        <div class="title">
+                            <span class="icon">📦</span>
+                            Сервис 2
+                        </div>
+                        <p class="desc">
+                            Здесь можно добавить следующий веб-сервис: описание и ссылка на панель или документацию.
+                        </p>
+                        <div class="actions">
+                            <a href="#" class="btn-outline-custom">Скоро</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-lg-4">
+                    <div class="service-card">
+                        <div class="title">
+                            <span class="icon">⚙️</span>
+                            Сервис 3
+                        </div>
+                        <p class="desc">
+                            Ещё один сервис: замените текст и ссылки в этом шаблоне под свои проекты.
+                        </p>
+                        <div class="actions">
+                            <a href="#" class="btn-outline-custom">Скоро</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <footer class="footer">
+            <a href="/admin" class="text-decoration-none" style="color: var(--text-muted);">Вход в админку</a>
+            &nbsp;·&nbsp;
+            <a href="/docs" class="text-decoration-none" style="color: var(--text-muted);">OpenAPI</a>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

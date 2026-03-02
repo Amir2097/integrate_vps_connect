@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.database import engine, Base, async_session
-from app.routers import api, admin_api, admin_views, internal_api
+from app.routers import api, admin_api, admin_views, internal_api, home_views
 from app.routers.auth_router import router as auth_router
 from app.services.subscription import subscription_service
 
@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="VPN Manager", lifespan=lifespan)
 
+app.include_router(home_views.router)
 app.include_router(api.router)
 app.include_router(admin_api.router)
 app.include_router(internal_api.router)
@@ -68,8 +69,3 @@ app.include_router(auth_router)
 _static_dir = Path(__file__).resolve().parent / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
-
-
-@app.get("/")
-async def root():
-    return {"service": "VPN Manager", "docs": "/docs", "admin": "/admin"}
