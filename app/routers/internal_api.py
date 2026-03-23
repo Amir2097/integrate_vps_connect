@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.config import settings
-from app.models import User, Payment, PaymentStatus
+from app.models import User, Payment, PaymentStatus, Subscription
 from app.services.subscription import subscription_service
 from app.services.telegram_notify import notify_admin_payment_buttons
 
@@ -60,20 +60,30 @@ async def internal_admin_notify_payment(
 ):
     """Отправить админу сообщение «Я оплатил» с кнопками Подтвердить/Отклонить (вызывает бот)."""
     r = await db.execute(
-        select(Payment, User)
+        select(Payment, User, Subscription)
         .join(User, Payment.user_id == User.id)
+        .outerjoin(Subscription, Payment.subscription_id == Subscription.id)
         .where(Payment.id == body.payment_id, Payment.status == PaymentStatus.pending)
     )
     row = r.one_or_none()
     if not row:
         raise HTTPException(404, "Pending payment not found")
-    payment, user = row
-    name = user.full_name or "—"
-    username = f"@{user.telegram_username}" if user.telegram_username else "—"
+    payment, user, sub = row
+    name = (user.full_name or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    username = (f"@{user.telegram_username}" if user.telegram_username else "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    months = getattr(payment, "subscription_months", 1) or 1
+    amount = payment.amount
+    is_renewal = bool(sub and sub.started_at is not None)
+    sub_name = ((sub.display_name if sub else None) or f"#{payment.subscription_id or '—'}").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    pay_type = "Продление" if is_renewal else "Новое подключение"
     text = (
         f"💰 <b>«Я оплатил»</b>\n"
+        f"Тип: <b>{pay_type}</b>\n"
         f"Пользователь: {name} ({username})\n"
         f"Telegram ID: <code>{user.telegram_id}</code>\n"
+        f"Подписка: <b>{sub_name}</b>\n"
+        f"Срок: <b>{months} мес.</b>\n"
+        f"Сумма: <b>{amount} ₽</b>\n"
         f"Подтвердите оплату кнопкой ниже или в админке."
     )
     ok = await notify_admin_payment_buttons(payment.id, text)

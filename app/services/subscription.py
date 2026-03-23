@@ -9,6 +9,13 @@ from app.services.wireguard import wireguard_service
 
 class SubscriptionService:
     @staticmethod
+    def _utcnow_like(dt: datetime | None) -> datetime:
+        """now() с той же tz-aware/naive природой, что и dt, чтобы безопасно сравнивать даты."""
+        if dt is not None and dt.tzinfo is not None:
+            return datetime.now(dt.tzinfo)
+        return datetime.utcnow()
+
+    @staticmethod
     async def get_or_create_user(
         db: AsyncSession,
         telegram_id: int,
@@ -164,7 +171,7 @@ class SubscriptionService:
                 payment.status = PaymentStatus.pending
                 return None
             months = getattr(payment, "subscription_months", 1) or 1
-            now = datetime.utcnow()
+            now = SubscriptionService._utcnow_like(sub.expires_at)
             base = sub.expires_at if (sub.expires_at and sub.expires_at > now) else now
             sub.status = SubscriptionStatus.active
             if not sub.started_at:
@@ -182,9 +189,10 @@ class SubscriptionService:
                 if user and user.telegram_id:
                     from app.services.telegram_notify import send_message
                     exp = sub.expires_at.strftime("%d.%m.%Y") if sub.expires_at else "—"
+                    safe_name = (sub.display_name or existing_vpn.display_name or existing_vpn.name).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                     await send_message(
                         user.telegram_id,
-                        f"✅ Подписка <b>«{(sub.display_name or existing_vpn.display_name or existing_vpn.name)}»</b> продлена до {exp}. "
+                        f"✅ Подписка <b>«{safe_name}»</b> продлена до {exp}. "
                         "Ваш текущий конфиг остаётся прежним.",
                     )
                 await db.flush()
