@@ -189,37 +189,51 @@ async def i_paid_callback(callback: CallbackQuery):
     except (IndexError, ValueError):
         await callback.message.answer("Ошибка. Нажмите «Я оплатил» в главном меню после перевода.")
         return
-    await callback.message.answer(
-        "Заявка отправлена администратору. Ожидайте подтверждения — после подтверждения оплаты вам придёт конфиг в этот чат."
-    )
     if _internal_headers():
         try:
-            await _api(
+            resp = await _api(
                 "POST",
                 "/api/internal/admin-notify-payment",
                 json={"payment_id": payment_id},
                 headers=_internal_headers(),
             )
+            if resp.get("deduplicated"):
+                await callback.message.answer(
+                    "Вы уже отправили уведомление об оплате по этой заявке. "
+                    "Администратор уже получил запрос, ожидайте подтверждения."
+                )
+            else:
+                await callback.message.answer(
+                    "Заявка отправлена администратору. Ожидайте подтверждения — после подтверждения оплаты вам придёт конфиг в этот чат."
+                )
         except Exception:
             pass
 
 
 @router.message(F.text.in_(["Я оплатил", "Я оплатил(а)", "✅ Я оплатил", "✅ Я оплатил(а)"]))
 async def i_paid(message: Message):
-    await message.answer(
-        "Ожидайте подтверждения от администратора. После подтверждения оплаты "
-        "вам придёт конфиг WireGuard в этот чат."
-    )
     try:
         data = await _api("GET", f"/api/user/by-telegram/{message.from_user.id}/pending-payment")
         payment_id = data.get("payment_id")
         if payment_id and _internal_headers():
-            await _api(
+            resp = await _api(
                 "POST",
                 "/api/internal/admin-notify-payment",
                 json={"payment_id": payment_id},
                 headers=_internal_headers(),
             )
+            if resp.get("deduplicated"):
+                await message.answer(
+                    "Вы уже нажимали «Я оплатил(а)» по этой заявке. "
+                    "Администратор уже получил уведомление, ожидайте подтверждения."
+                )
+            else:
+                await message.answer(
+                    "Ожидайте подтверждения от администратора. После подтверждения оплаты "
+                    "вам придёт конфиг WireGuard в этот чат."
+                )
+        else:
+            await message.answer("Не найдена заявка в ожидании оплаты.")
     except Exception:
         pass
 

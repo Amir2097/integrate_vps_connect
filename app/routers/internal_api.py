@@ -59,6 +59,7 @@ async def internal_admin_notify_payment(
     _: bool = Depends(_check_internal_secret),
 ):
     """Отправить админу сообщение «Я оплатил» с кнопками Подтвердить/Отклонить (вызывает бот)."""
+    notified_marker = "[BOT_ADMIN_NOTIFIED]"
     r = await db.execute(
         select(Payment, User, Subscription)
         .join(User, Payment.user_id == User.id)
@@ -69,6 +70,10 @@ async def internal_admin_notify_payment(
     if not row:
         raise HTTPException(404, "Pending payment not found")
     payment, user, sub = row
+    # Не плодим дубликаты: для одного pending-платежа шлём админу только одно уведомление «Я оплатил».
+    notes = payment.admin_notes or ""
+    if notified_marker in notes:
+        return {"ok": True, "payment_id": body.payment_id, "deduplicated": True}
     name = (user.full_name or "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     username = (f"@{user.telegram_username}" if user.telegram_username else "—").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     months = getattr(payment, "subscription_months", 1) or 1
@@ -87,4 +92,8 @@ async def internal_admin_notify_payment(
         f"Подтвердите оплату кнопкой ниже или в админке."
     )
     ok = await notify_admin_payment_buttons(payment.id, text)
-    return {"ok": ok, "payment_id": body.payment_id}
+    if ok:
+        payment.admin_notes = (notes + " " + notified_marker).strip()
+        await db.flush()
+        await db.commit()
+    return {"ok": ok, "payment_id": body.payment_id, "deduplicated": False}
