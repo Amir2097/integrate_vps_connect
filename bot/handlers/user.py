@@ -34,6 +34,7 @@ PRODUCT_DESCRIPTION = (
 class ConnectVPN(StatesGroup):
     wait_months = State()       # выбор срока подписки
     wait_config_name = State()  # ввод названия конфига
+    wait_renew_months = State()  # выбор срока продления существующей подписки
 
 
 async def _api(method: str, path: str, json: dict | None = None, headers: dict | None = None) -> dict | list:
@@ -92,6 +93,21 @@ def _months_keyboard():
         [
             InlineKeyboardButton(text=f"5 месяцев — {price * 5} ₽", callback_data="sub_months:5"),
             InlineKeyboardButton(text=f"12 месяцев — {price * 12} ₽", callback_data="sub_months:12"),
+        ],
+    ])
+
+
+def _renew_months_keyboard(subscription_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора срока продления текущей подписки."""
+    price = int(settings.subscription_amount)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"1 месяц — {price} ₽", callback_data=f"renew_months:{subscription_id}:1"),
+            InlineKeyboardButton(text=f"3 месяца — {price * 3} ₽", callback_data=f"renew_months:{subscription_id}:3"),
+        ],
+        [
+            InlineKeyboardButton(text=f"5 месяцев — {price * 5} ₽", callback_data=f"renew_months:{subscription_id}:5"),
+            InlineKeyboardButton(text=f"12 месяцев — {price * 12} ₽", callback_data=f"renew_months:{subscription_id}:12"),
         ],
     ])
 
@@ -259,10 +275,78 @@ async def my_subscriptions(message: Message):
                     InlineKeyboardButton(text="Текст конфига (файл)", callback_data=f"cfg:txt:{vpn_client_id}"),
                     InlineKeyboardButton(text="QR-код", callback_data=f"cfg:qr:{vpn_client_id}"),
                 ],
+                [
+                    InlineKeyboardButton(text="🔄 Продлить", callback_data=f"renew_sub:{s.get('id')}"),
+                ],
             ])
             await message.answer(text, reply_markup=kb)
         else:
-            await message.answer(text)
+            status = s.get("status", "")
+            if status in ("active", "expired"):
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Продлить", callback_data=f"renew_sub:{s.get('id')}")],
+                ])
+                await message.answer(text, reply_markup=kb)
+            else:
+                await message.answer(text)
+
+
+@router.callback_query(F.data.startswith("renew_sub:"))
+async def renew_subscription_start(callback: CallbackQuery):
+    """Старт продления конкретной подписки: выбор срока (без создания нового конфига)."""
+    await callback.answer()
+    try:
+        subscription_id = int(callback.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await callback.message.answer("Ошибка данных. Попробуйте снова в «Мои подписки».")
+        return
+    await callback.message.answer(
+        "Выберите срок продления текущей подписки:",
+        reply_markup=_renew_months_keyboard(subscription_id),
+    )
+
+
+@router.callback_query(F.data.startswith("renew_months:"))
+async def renew_subscription_choose_months(callback: CallbackQuery):
+    """Создать заявку на продление текущей подписки и отправить реквизиты."""
+    await callback.answer()
+    try:
+        _, sub_id_str, months_str = callback.data.split(":", 2)
+        renew_subscription_id = int(sub_id_str)
+        months = int(months_str)
+    except (ValueError, IndexError):
+        await callback.message.answer("Ошибка выбора срока. Попробуйте снова.")
+        return
+    if months not in (1, 3, 5, 12):
+        months = 1
+    try:
+        result = await _api("POST", "/api/payment/request", {
+            "telegram_id": callback.from_user.id,
+            "months": months,
+            "renew_subscription_id": renew_subscription_id,
+        })
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 400:
+            await callback.message.answer(
+                "У вас уже есть заявка, ожидающая подтверждения. Нажмите «Я оплатил(а)» после перевода."
+            )
+            return
+        await callback.message.answer(f"Ошибка: {e.response.text}")
+        return
+    except Exception as e:
+        await callback.message.answer(f"Ошибка: {e}")
+        return
+    payment_id = result.get("payment_id")
+    amount = int(settings.subscription_amount) * months
+    text = (
+        f"📋 Заявка на продление создана на <b>{months} мес.</b> (к оплате {amount} ₽).\n\n"
+        + _payment_info_text() + "\n\n"
+        "После перевода нажмите кнопку ниже — заявка уйдёт администратору на подтверждение."
+    )
+    pay_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"i_paid:{payment_id}")],
+    ])
+    await _send_payment_info(callback.message, text, pay_keyboard)
 
 
 def _config_format_keyboard(vpn_client_id: int) -> InlineKeyboardMarkup:

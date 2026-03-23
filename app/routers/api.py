@@ -35,6 +35,7 @@ class CreatePaymentRequest(BaseModel):
     telegram_id: int | None = None
     display_name: str | None = None  # название конфига от пользователя
     months: int = 1  # срок подписки: 1, 3, 5 или 12 месяцев
+    renew_subscription_id: int | None = None  # если задано: продление существующей подписки без нового конфига
 
 
 class CreatePaymentResponse(BaseModel):
@@ -59,7 +60,11 @@ async def create_payment_request(data: CreatePaymentRequest, db: AsyncSession = 
         raise HTTPException(400, "Provide user_id or telegram_id")
     try:
         sub, payment = await subscription_service.create_payment_request(
-            db, user_id, display_name=data.display_name, months=data.months
+            db,
+            user_id,
+            display_name=data.display_name,
+            months=data.months,
+            renew_subscription_id=data.renew_subscription_id,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

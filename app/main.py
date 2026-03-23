@@ -36,7 +36,7 @@ async def run_expiry_reminders():
                 exp_date = sub.expires_at.strftime("%d.%m.%Y") if sub.expires_at else "—"
                 text = (
                     f"Напоминание: ваша VPN-подписка истекает через 3 дня ({exp_date}). "
-                    "Для продления создайте новую заявку: «Подключиться»."
+                    "Для продления текущего конфига откройте «Мои подписки» и нажмите «Продлить» у нужной подписки."
                 )
                 await send_message(user.telegram_id, text)
         except Exception as e:

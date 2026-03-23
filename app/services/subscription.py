@@ -38,6 +38,7 @@ class SubscriptionService:
         user_id: int,
         display_name: str | None = None,
         months: int = 1,
+        renew_subscription_id: int | None = None,
     ) -> tuple[Subscription, Payment]:
         """Создаёт подписку в pending_payment и платёж в pending. months: 1, 3, 5 или 12."""
         r = await db.execute(
@@ -48,32 +49,43 @@ class SubscriptionService:
         )
         if r.scalars().first():
             raise ValueError("У вас уже есть заявка, ожидайте подтверждения")
-        # Отменить только те подписки в pending_payment, у которых нет ожидающего платежа (не трогаем активные заявки)
-        r = await db.execute(
-            select(Subscription).where(
-                Subscription.user_id == user_id,
-                Subscription.status == SubscriptionStatus.pending_payment,
-            )
-        )
-        for sub in r.scalars().all():
-            r2 = await db.execute(
-                select(Payment.id).where(
-                    Payment.subscription_id == sub.id,
-                    Payment.status == PaymentStatus.pending,
-                ).limit(1)
-            )
-            if r2.scalars().first() is None:
-                sub.status = SubscriptionStatus.cancelled
         if months not in (1, 3, 5, 12):
             months = 1
-        name_clean = (display_name or "").strip()[:128] or None
-        sub = Subscription(
-            user_id=user_id,
-            status=SubscriptionStatus.pending_payment,
-            display_name=name_clean,
-        )
-        db.add(sub)
-        await db.flush()
+        if renew_subscription_id is not None:
+            r = await db.execute(
+                select(Subscription).where(
+                    Subscription.id == renew_subscription_id,
+                    Subscription.user_id == user_id,
+                )
+            )
+            sub = r.scalars().one_or_none()
+            if not sub:
+                raise ValueError("Подписка для продления не найдена")
+        else:
+            # Отменить только те подписки в pending_payment, у которых нет ожидающего платежа (не трогаем активные заявки)
+            r = await db.execute(
+                select(Subscription).where(
+                    Subscription.user_id == user_id,
+                    Subscription.status == SubscriptionStatus.pending_payment,
+                )
+            )
+            for sub_old in r.scalars().all():
+                r2 = await db.execute(
+                    select(Payment.id).where(
+                        Payment.subscription_id == sub_old.id,
+                        Payment.status == PaymentStatus.pending,
+                    ).limit(1)
+                )
+                if r2.scalars().first() is None:
+                    sub_old.status = SubscriptionStatus.cancelled
+            name_clean = (display_name or "").strip()[:128] or None
+            sub = Subscription(
+                user_id=user_id,
+                status=SubscriptionStatus.pending_payment,
+                display_name=name_clean,
+            )
+            db.add(sub)
+            await db.flush()
         amount = float(settings.subscription_amount) * months
         payment = Payment(
             user_id=user_id,
@@ -132,7 +144,7 @@ class SubscriptionService:
         if not confirmed and payment.subscription_id:
             r = await db.execute(select(Subscription).where(Subscription.id == payment.subscription_id))
             sub = r.scalars().one_or_none()
-            if sub:
+            if sub and sub.status == SubscriptionStatus.pending_payment and sub.started_at is None:
                 sub.status = SubscriptionStatus.cancelled
             r = await db.execute(select(User).where(User.id == payment.user_id))
             user = r.scalars().one_or_none()
@@ -152,9 +164,12 @@ class SubscriptionService:
                 payment.status = PaymentStatus.pending
                 return None
             months = getattr(payment, "subscription_months", 1) or 1
+            now = datetime.utcnow()
+            base = sub.expires_at if (sub.expires_at and sub.expires_at > now) else now
             sub.status = SubscriptionStatus.active
-            sub.started_at = datetime.utcnow()
-            sub.expires_at = datetime.utcnow() + timedelta(days=settings.subscription_days * months)
+            if not sub.started_at:
+                sub.started_at = now
+            sub.expires_at = base + timedelta(days=settings.subscription_days * months)
 
             # Уже есть VpnClient по этой подписке (повторное подтверждение) — только отправить выбор конфига
             r = await db.execute(
@@ -165,8 +180,13 @@ class SubscriptionService:
                 r = await db.execute(select(User).where(User.id == payment.user_id))
                 user = r.scalars().one_or_none()
                 if user and user.telegram_id:
-                    from app.services.telegram_notify import send_activation_choice
-                    await send_activation_choice(user.telegram_id, existing_vpn.id)
+                    from app.services.telegram_notify import send_message
+                    exp = sub.expires_at.strftime("%d.%m.%Y") if sub.expires_at else "—"
+                    await send_message(
+                        user.telegram_id,
+                        f"✅ Подписка <b>«{(sub.display_name or existing_vpn.display_name or existing_vpn.name)}»</b> продлена до {exp}. "
+                        "Ваш текущий конфиг остаётся прежним.",
+                    )
                 await db.flush()
                 return payment
 
