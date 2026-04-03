@@ -260,6 +260,8 @@ ufw status
 
    Положи `wg-backend-helper.sh` **в ту же директорию**, что и `add-wg-client.sh` (например оба в `/usr/local/bin/`), либо задай в `.env` явный путь `WG_HELPER_SCRIPT_PATH=/usr/local/bin/wg-backend-helper.sh`. Если интерфейс не `wg0`, укажи `WG_INTERFACE=wg1` в `.env`.
 
+   В sudoers должна быть именно команда вида **«пользователь может выполнять этот исполняемый файл»** (`NOPASSWD: /usr/local/bin/wg-backend-helper.sh`). Бэкенд вызывает `sudo /usr/local/bin/wg-backend-helper.sh …` (**не** `sudo env …`), иначе sudo сверяет whitelist с другой командой и отзыв не работает.
+
 3. **.env**: `WG_USE_SUDO=true`, `WG_SCRIPT_PATH=/usr/local/bin/add-wg-client.sh`. Systemd: `User=amir`.
 
 4. **Скрипт после создания файла** должен выставить права так, чтобы amir мог его прочитать. В репозитории скрипт делает `chmod 600`; для варианта 2 нужен `chmod 644` созданного `.conf` (или скрипт может проверять переменную окружения и тогда делать 644). См. ниже правку в скрипте.

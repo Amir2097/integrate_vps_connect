@@ -10,10 +10,22 @@ WG_CLIENTS_DIR="${WG_CLIENTS_DIR:-/etc/wireguard/clients}"
 
 die() { echo "[wg-backend-helper] $*" >&2; exit 1; }
 
+# wg syncconf требует ДВА аргумента: интерфейс и путь к файлу (не stdin).
+_apply_syncconf() {
+  local iface="$1"
+  local tmp
+  tmp="$(mktemp)" || die "mktemp failed"
+  wg-quick strip "$iface" >"$tmp" || { rm -f "$tmp"; die "wg-quick strip $iface failed"; }
+  wg syncconf "$iface" "$tmp" || { rm -f "$tmp"; exit 1; }
+  rm -f "$tmp"
+}
+
 case "${1:-}" in
   revoke-peer)
     PUBKEY="${2:-}"
-    [ -n "$PUBKEY" ] || die "usage: $0 revoke-peer <client_public_key>"
+    [ -n "$PUBKEY" ] || die "usage: $0 revoke-peer <client_public_key> [wg_conf] [iface]"
+    [ -n "${3:-}" ] && WG_CONF="$3"
+    [ -n "${4:-}" ] && WG_INTERFACE="$4"
     wg set "$WG_INTERFACE" peer "$PUBKEY" remove 2>/dev/null || true
     export PUBKEY WG_CONF
     python3 <<'PY'
@@ -53,18 +65,21 @@ if text.endswith("\n"):
 with open(path, "w", encoding="utf-8") as f:
     f.write(new_text)
 PY
-    wg syncconf "$WG_INTERFACE" < <(wg-quick strip "$WG_INTERFACE")
+    _apply_syncconf "$WG_INTERFACE"
     ;;
   rm-client-conf)
     NAME="${2:-}"
     [[ "$NAME" =~ ^[a-zA-Z0-9_.-]+$ ]] || die "invalid client name"
+    [ -n "${3:-}" ] && WG_CLIENTS_DIR="$3"
     rm -f "$WG_CLIENTS_DIR/${NAME}.conf"
     ;;
   append-peer)
     PUBKEY="${2:-}"
     ALLOWED="${3:-}"
-    [ -n "$PUBKEY" ] && [ -n "$ALLOWED" ] || die "usage: $0 append-peer <pubkey> <allowed_ip_or_cidr>"
+    [ -n "$PUBKEY" ] && [ -n "$ALLOWED" ] || die "usage: $0 append-peer <pubkey> <allowed> [wg_conf] [iface]"
     [[ "$ALLOWED" == */* ]] || ALLOWED="${ALLOWED}/32"
+    [ -n "${4:-}" ] && WG_CONF="$4"
+    [ -n "${5:-}" ] && WG_INTERFACE="$5"
     export PUBKEY ALLOWED WG_CONF
     python3 <<'PY'
 import os
@@ -87,9 +102,9 @@ with open(path, "w", encoding="utf-8") as f:
     if not new_text.endswith("\n"):
         f.write("\n")
 PY
-    wg syncconf "$WG_INTERFACE" < <(wg-quick strip "$WG_INTERFACE")
+    _apply_syncconf "$WG_INTERFACE"
     ;;
   *)
-    die "usage: $0 revoke-peer <pubkey> | rm-client-conf <name> | append-peer <pubkey> <allowed_ip>"
+    die "usage: $0 revoke-peer <pubkey> [wg_conf] [iface] | rm-client-conf <name> [clients_dir] | append-peer <pubkey> <allowed> [wg_conf] [iface]"
     ;;
 esac

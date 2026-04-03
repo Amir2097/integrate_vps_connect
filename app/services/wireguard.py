@@ -189,17 +189,14 @@ PersistentKeepalive = 25
         return ""
 
     async def _invoke_helper(self, *args: str) -> tuple[int, str]:
+        """
+        Важно: вызываем «sudo /path/wg-backend-helper.sh …», без «sudo env …».
+        Иначе sudo сопоставляет whitelist с командой env, а не со скриптом — NOPASSWD не срабатывает.
+        """
         hpath = self._resolved_helper_script()
         if not hpath:
             return -1, "helper script not found"
-        cmd = (["sudo"] if self.use_sudo else []) + [
-            "env",
-            f"WG_CONF={self.conf_path}",
-            f"WG_INTERFACE={self.wg_interface}",
-            f"WG_CLIENTS_DIR={str(self.clients_dir)}",
-            hpath,
-            *args,
-        ]
+        cmd = (["sudo"] if self.use_sudo else []) + [hpath, *args]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -387,7 +384,7 @@ PersistentKeepalive = 25
             return
         path = Path(self.conf_path)
         if self._resolved_helper_script():
-            code, msg = await self._invoke_helper("revoke-peer", pk)
+            code, msg = await self._invoke_helper("revoke-peer", pk, self.conf_path, self.wg_interface)
             if code != 0:
                 print(f"[WG] helper revoke-peer failed ({code}): {msg}", flush=True)
             return
@@ -424,7 +421,7 @@ PersistentKeepalive = 25
             return
         path = self.clients_dir / f"{client_name}.conf"
         if self._resolved_helper_script():
-            code, msg = await self._invoke_helper("rm-client-conf", client_name)
+            code, msg = await self._invoke_helper("rm-client-conf", client_name, str(self.clients_dir))
             if code != 0:
                 print(f"[WG] helper rm-client-conf failed ({code}): {msg}", flush=True)
             return
@@ -465,7 +462,7 @@ PersistentKeepalive = 25
             allowed = f"{allowed}/32"
 
         if self._resolved_helper_script():
-            code, msg = await self._invoke_helper("append-peer", pk, allowed)
+            code, msg = await self._invoke_helper("append-peer", pk, allowed, self.conf_path, self.wg_interface)
             if code != 0:
                 print(f"[WG] helper append-peer failed ({code}): {msg}", flush=True)
             return
