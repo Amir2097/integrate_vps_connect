@@ -1,6 +1,8 @@
 """
 Интеграция с WireGuard: вызов add-wg-client.sh и отзыв peer.
-При локальном запуске без WG_SCRIPT_PATH возвращает мок-данные.
+При локальном запуске без WG_SCRIPT_PATH (или если скрипт не найден) — мок:
+валидный по формату .conf для импорта/QR, но файл на диске не создаётся и туннель
+к реальному серверу не подключится без настоящего peer на WG.
 """
 import asyncio
 import re
@@ -121,20 +123,47 @@ class WireGuardService:
         return ""
 
     def _mock_add_client(self, client_name: str) -> dict:
-        """Мок для локального теста без WireGuard."""
-        import secrets
+        """Мок для локального теста без WireGuard: ключи в формате WG, чтобы QR/импорт не отклонялись."""
+        import base64
+        import zlib
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+        def _b64_32(b: bytes) -> str:
+            return base64.b64encode(b).decode("ascii")
+
+        client_priv = X25519PrivateKey.generate()
+        client_priv_bytes = client_priv.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        client_pub_bytes = client_priv.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        # Отдельная пара только чтобы [Peer] PublicKey был валидной строкой ключа (не реальный сервер).
+        server_pub_bytes = X25519PrivateKey.generate().public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+
         base = "10.66.0"
-        # В моке просто даём фиктивный IP (реальный скрипт на сервере выдаст свой)
-        allowed_ip = f"{base}.2"
-        private_key = secrets.token_urlsafe(32)
-        public_key = secrets.token_urlsafe(32)
+        h = zlib.crc32(client_name.encode("utf-8")) & 0xFFFFFFFF
+        allowed_ip = f"{base}.{2 + (h % 253)}"
+
+        private_key = _b64_32(client_priv_bytes)
+        public_key = _b64_32(client_pub_bytes)
+        server_peer_key = _b64_32(server_pub_bytes)
+
         config_content = f"""[Interface]
 PrivateKey = {private_key}
 Address = {allowed_ip}/32
 DNS = 1.1.1.1, 1.0.0.1
 
 [Peer]
-PublicKey = SERVER_PUBKEY_PLACEHOLDER
+PublicKey = {server_peer_key}
 Endpoint = {self.server_endpoint}:{self.wg_port}
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
@@ -187,6 +216,17 @@ PersistentKeepalive = 25
         )
         strip_out, _ = await strip_proc.communicate()
         await proc.communicate(input=strip_out)
+
+    def delete_client_conf_file(self, client_name: str) -> None:
+        """Удаляет файл userX_Y.conf из каталога клиентов (если есть)."""
+        if not client_name:
+            return
+        path = self.clients_dir / f"{client_name}.conf"
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError as e:
+            print(f"[WG] delete_client_conf_file failed: {e}", flush=True)
 
     async def restore_client(self, public_key: str, allowed_ip: str) -> None:
         """

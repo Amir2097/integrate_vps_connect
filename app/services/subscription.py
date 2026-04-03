@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -321,13 +321,18 @@ class SubscriptionService:
         Помечает подписки с истёкшим сроком и при необходимости отзывает VPN.
         Возвращает количество обновлённых подписок.
         """
+        # Истечение сравниваем в Python с «now» той же природы (naive/aware), что и expires_at — так надёжнее при TIMESTAMPTZ/TIMESTAMP.
         r = await db.execute(
             select(Subscription).where(
                 Subscription.status == SubscriptionStatus.active,
-                Subscription.expires_at <= datetime.utcnow(),
+                Subscription.expires_at.isnot(None),
             )
         )
-        subs = r.scalars().all()
+        subs = [
+            s
+            for s in r.scalars().all()
+            if s.expires_at <= SubscriptionService._utcnow_like(s.expires_at)
+        ]
         for sub in subs:
             sub.status = SubscriptionStatus.expired
             # Отозвать только конфиг этой подписки (по subscription_id)
@@ -340,7 +345,7 @@ class SubscriptionService:
     @staticmethod
     async def get_expiring_soon(db: AsyncSession, days: int = 3) -> list[tuple["Subscription", "User"]]:
         """Подписки, до истечения которых осталось примерно days дней (для напоминания)."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         # Напоминаем, если истекает через (days - 0.5) .. (days + 0.5) дней
         start = now + timedelta(days=days - 1, hours=12)
         end = now + timedelta(days=days, hours=12)

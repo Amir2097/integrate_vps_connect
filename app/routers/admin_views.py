@@ -9,13 +9,13 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Request, Form, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.auth import verify_password
 from app.config import settings
-from app.models import User, Payment, PaymentStatus, Subscription, VpnClient
+from app.models import User, Payment, PaymentStatus, Subscription, VpnClient, SubscriptionStatus
 from app.services.telegram_notify import send_message
 from app.services.wireguard import wireguard_service
 
@@ -273,6 +273,49 @@ async def admin_unblock_config(
             )
         return RedirectResponse(url="/admin?config_unblocked=1", status_code=302)
     return RedirectResponse(url="/admin?error=config_not_found", status_code=302)
+
+
+@router.post("/configs/{vpn_client_id}/delete")
+async def admin_delete_config(
+    vpn_client_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Полностью удалить привязанный конфиг: peer с сервера, файл .conf в каталоге клиентов, запись в БД.
+    Подписка помечается как истекшая (если была активна). Пользователь может оформить новое подключение.
+    """
+    if not _is_admin_session(request):
+        return RedirectResponse(url="/admin/login", status_code=302)
+    r = await db.execute(
+        select(VpnClient, User).join(User, VpnClient.user_id == User.id).where(VpnClient.id == vpn_client_id)
+    )
+    row = r.one_or_none()
+    if not row:
+        return RedirectResponse(url="/admin?error=config_not_found", status_code=302)
+    vpn_client, user = row
+    try:
+        await wireguard_service.revoke_client(vpn_client.wg_public_key)
+    except Exception as e:
+        print(f"[admin] revoke_client (delete) failed: {e}", flush=True)
+    wireguard_service.delete_client_conf_file(vpn_client.name)
+    if vpn_client.subscription_id:
+        r_sub = await db.execute(
+            select(Subscription).where(Subscription.id == vpn_client.subscription_id)
+        )
+        sub = r_sub.scalars().one_or_none()
+        if sub and sub.status == SubscriptionStatus.active:
+            sub.status = SubscriptionStatus.expired
+    await db.execute(delete(VpnClient).where(VpnClient.id == vpn_client_id))
+    await db.commit()
+    name = (vpn_client.display_name or vpn_client.name or "конфиг").strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if user.telegram_id:
+        await send_message(
+            user.telegram_id,
+            f"🗑 Конфиг <b>«{name}»</b> удалён администратором. Доступ по нему отключён. "
+            "Для нового доступа оформите подключение заново: «Подключиться».",
+        )
+    return RedirectResponse(url="/admin?config_deleted=1", status_code=302)
 
 
 @router.post("/upload-sbp-qr")
