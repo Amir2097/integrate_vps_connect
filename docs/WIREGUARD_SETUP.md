@@ -247,6 +247,19 @@ ufw status
    sudo chmod 440 /etc/sudoers.d/wireguard-amir
    ```
 
+   **Отзыв peer и удаление `.conf` из админки:** процесс приложения не читает и не пишет `wg0.conf` напрямую (файл обычно `600` у root). Без дополнительных прав команды «Заблокировать» / «Удалить конфиг» не меняют сервер. Рекомендуется один скрипт и одна строка sudoers:
+
+   ```bash
+   sudo cp /path/to/integrate_vps_connect/scripts/wg-backend-helper.sh /usr/local/bin/wg-backend-helper.sh
+   sudo chmod +x /usr/local/bin/wg-backend-helper.sh
+   sudo tee /etc/sudoers.d/wireguard-backend-helper << 'EOF'
+   amir ALL=(root) NOPASSWD: /usr/local/bin/wg-backend-helper.sh
+   EOF
+   sudo chmod 440 /etc/sudoers.d/wireguard-backend-helper
+   ```
+
+   Положи `wg-backend-helper.sh` **в ту же директорию**, что и `add-wg-client.sh` (например оба в `/usr/local/bin/`), либо задай в `.env` явный путь `WG_HELPER_SCRIPT_PATH=/usr/local/bin/wg-backend-helper.sh`. Если интерфейс не `wg0`, укажи `WG_INTERFACE=wg1` в `.env`.
+
 3. **.env**: `WG_USE_SUDO=true`, `WG_SCRIPT_PATH=/usr/local/bin/add-wg-client.sh`. Systemd: `User=amir`.
 
 4. **Скрипт после создания файла** должен выставить права так, чтобы amir мог его прочитать. В репозитории скрипт делает `chmod 600`; для варианта 2 нужен `chmod 644` созданного `.conf` (или скрипт может проверять переменную окружения и тогда делать 644). См. ниже правку в скрипте.
@@ -285,6 +298,7 @@ sudo tee /etc/sudoers.d/wireguard-amir << 'EOF'
 amir ALL=(root) NOPASSWD: /usr/local/bin/add-wg-client.sh
 amir ALL=(root) NOPASSWD: /usr/bin/wg syncconf wg0 -
 amir ALL=(root) NOPASSWD: /usr/bin/wg-quick strip wg0
+amir ALL=(root) NOPASSWD: /usr/local/bin/wg-backend-helper.sh
 EOF
 sudo chmod 440 /etc/sudoers.d/wireguard-amir
 

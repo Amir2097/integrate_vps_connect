@@ -298,7 +298,7 @@ async def admin_delete_config(
         await wireguard_service.revoke_client(vpn_client.wg_public_key)
     except Exception as e:
         print(f"[admin] revoke_client (delete) failed: {e}", flush=True)
-    wireguard_service.delete_client_conf_file(vpn_client.name)
+    await wireguard_service.delete_client_conf_file(vpn_client.name)
     if vpn_client.subscription_id:
         r_sub = await db.execute(
             select(Subscription).where(Subscription.id == vpn_client.subscription_id)

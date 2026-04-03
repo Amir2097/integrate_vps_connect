@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     wg_script_path: str = ""
     wg_conf_path: str = "/etc/wireguard/wg0.conf"
     wg_clients_dir: str = "/etc/wireguard/clients"
+    # Имя интерфейса (wg0, wg1, …) — для syncconf / wg set.
+    wg_interface: str = "wg0"
+    # Опционально: путь к scripts/wg-backend-helper.sh на сервере. Если пусто — ищется рядом с WG_SCRIPT_PATH.
+    wg_helper_script_path: str = ""
     # Запускать скрипт и wg-команды через sudo (true) или напрямую от пользователя процесса (false).
     # Если сервис крутится от пользователя с прямыми правами на скрипт и /etc/wireguard — ставь false.
     wg_use_sudo: bool = True

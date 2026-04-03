@@ -19,6 +19,8 @@ class WireGuardService:
         self.server_endpoint = settings.server_endpoint
         self.wg_port = settings.wg_port
         self.use_sudo = getattr(settings, "wg_use_sudo", True)
+        self.wg_interface = (getattr(settings, "wg_interface", None) or "wg0").strip() or "wg0"
+        self._helper_override = (getattr(settings, "wg_helper_script_path", None) or "").strip()
 
     async def add_client(self, client_name: str) -> dict:
         """
@@ -176,93 +178,315 @@ PersistentKeepalive = 25
             "conf_path": "",
         }
 
-    async def revoke_client(self, public_key: str) -> None:
-        """
-        Удаляет peer из wg0.conf по публичному ключу и применяет конфиг.
-        """
-        if not self.conf_path or not Path(self.conf_path).exists():
-            return  # мок: ничего не делаем
+    def _resolved_helper_script(self) -> str:
+        if self._helper_override:
+            p = Path(self._helper_override)
+            return str(p) if p.is_file() else ""
+        if self.script_path:
+            s = Path(self.script_path).resolve().parent / "wg-backend-helper.sh"
+            if s.is_file():
+                return str(s)
+        return ""
 
+    async def _invoke_helper(self, *args: str) -> tuple[int, str]:
+        hpath = self._resolved_helper_script()
+        if not hpath:
+            return -1, "helper script not found"
+        cmd = (["sudo"] if self.use_sudo else []) + [
+            "env",
+            f"WG_CONF={self.conf_path}",
+            f"WG_INTERFACE={self.wg_interface}",
+            f"WG_CLIENTS_DIR={str(self.clients_dir)}",
+            hpath,
+            *args,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+        combined = (
+            out.decode("utf-8", errors="replace") + "\n" + err.decode("utf-8", errors="replace")
+        ).strip()
+        return proc.returncode, combined
+
+    def _wg_prefix(self) -> list[str]:
+        return ["sudo"] if self.use_sudo else []
+
+    async def _wg_set_peer_remove(self, pubkey: str) -> None:
+        proc = await asyncio.create_subprocess_exec(
+            *self._wg_prefix(),
+            "wg",
+            "set",
+            self.wg_interface,
+            "peer",
+            pubkey,
+            "remove",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode != 0:
+            print(
+                f"[WG] wg set {self.wg_interface} peer remove (non-fatal if peer absent): "
+                f"{err.decode('utf-8', errors='replace')}",
+                flush=True,
+            )
+
+    async def _read_main_conf(self) -> str | None:
         path = Path(self.conf_path)
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        result = []
+        if self.use_sudo:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo",
+                "cat",
+                str(path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await proc.communicate()
+            if proc.returncode != 0:
+                print(
+                    f"[WG] sudo cat {path} failed ({proc.returncode}): "
+                    f"{err.decode('utf-8', errors='replace')}",
+                    flush=True,
+                )
+                return None
+            return out.decode("utf-8", errors="replace")
+        if not path.is_file():
+            return None
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            print(f"[WG] read {path}: {e}", flush=True)
+            return None
+
+    async def _write_main_conf(self, content: str) -> bool:
+        path = Path(self.conf_path)
+        if self.use_sudo:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo",
+                "tee",
+                str(path),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, err = await proc.communicate(input=content.encode("utf-8"))
+            if proc.returncode != 0:
+                print(
+                    f"[WG] sudo tee {path} failed: {err.decode('utf-8', errors='replace')}",
+                    flush=True,
+                )
+                return False
+            return True
+        try:
+            path.write_text(content, encoding="utf-8")
+            return True
+        except OSError as e:
+            print(f"[WG] write {path}: {e}", flush=True)
+            return False
+
+    @staticmethod
+    def _strip_peer_blocks_with_pubkey(text: str, pubkey: str) -> str:
+        pk = pubkey.strip()
+        lines = text.splitlines()
+        out: list[str] = []
         i = 0
         while i < len(lines):
-            line = lines[i]
-            if line.strip() == "[Peer]":
-                block = [line]
+            if lines[i].strip() == "[Peer]":
+                block = [lines[i]]
                 i += 1
                 while i < len(lines) and not lines[i].strip().startswith("["):
                     block.append(lines[i])
                     i += 1
-                if public_key not in "\n".join(block):
-                    result.extend(block)
+                block_pk: str | None = None
+                for ln in block:
+                    s = ln.strip()
+                    if s.startswith("PublicKey"):
+                        _, _, rest = s.partition("=")
+                        block_pk = rest.strip()
+                        break
+                if block_pk != pk:
+                    out.extend(block)
             else:
-                result.append(line)
+                out.append(lines[i])
                 i += 1
-        path.write_text("\n".join(result), encoding="utf-8")
+        result = "\n".join(out)
+        if text.endswith("\n") and result and not result.endswith("\n"):
+            result += "\n"
+        return result
 
-        wg_prefix = ["sudo"] if self.use_sudo else []
+    @staticmethod
+    def _main_conf_has_peer_pubkey(text: str, pubkey: str) -> bool:
+        pk = pubkey.strip()
+        lines = text.splitlines()
+        i = 0
+        while i < len(lines):
+            if lines[i].strip() == "[Peer]":
+                i += 1
+                while i < len(lines) and not lines[i].strip().startswith("["):
+                    s = lines[i].strip()
+                    if s.startswith("PublicKey"):
+                        _, _, rest = s.partition("=")
+                        if rest.strip() == pk:
+                            return True
+                    i += 1
+            else:
+                i += 1
+        return False
+
+    async def _apply_syncconf(self) -> bool:
+        wg_prefix = self._wg_prefix()
+        strip_proc = await asyncio.create_subprocess_exec(
+            *wg_prefix,
+            "wg-quick",
+            "strip",
+            self.wg_interface,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        strip_out, strip_err = await strip_proc.communicate()
+        if strip_proc.returncode != 0:
+            print(
+                f"[WG] wg-quick strip {self.wg_interface} failed: "
+                f"{strip_err.decode('utf-8', errors='replace')}",
+                flush=True,
+            )
+            return False
         proc = await asyncio.create_subprocess_exec(
-            *wg_prefix, "wg", "syncconf", "wg0", "-",
+            *wg_prefix,
+            "wg",
+            "syncconf",
+            self.wg_interface,
+            "-",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        strip_proc = await asyncio.create_subprocess_exec(
-            *wg_prefix, "wg-quick", "strip", "wg0",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        strip_out, _ = await strip_proc.communicate()
-        await proc.communicate(input=strip_out)
+        _, err = await proc.communicate(input=strip_out)
+        if proc.returncode != 0:
+            print(
+                f"[WG] wg syncconf {self.wg_interface} failed: "
+                f"{err.decode('utf-8', errors='replace')}",
+                flush=True,
+            )
+            return False
+        return True
 
-    def delete_client_conf_file(self, client_name: str) -> None:
-        """Удаляет файл userX_Y.conf из каталога клиентов (если есть)."""
-        if not client_name:
+    async def revoke_client(self, public_key: str) -> None:
+        """
+        Снимает peer с интерфейса (wg set … remove), правит wg*.conf на диске и syncconf.
+        При WG_USE_SUDO и недоступном wg0.conf процессу — используется sudo cat/tee или wg-backend-helper.sh.
+        """
+        if not (self.conf_path or "").strip():
+            return
+        pk = (public_key or "").strip()
+        if not pk:
+            print("[WG] revoke_client: empty public key", flush=True)
+            return
+        path = Path(self.conf_path)
+        if self._resolved_helper_script():
+            code, msg = await self._invoke_helper("revoke-peer", pk)
+            if code != 0:
+                print(f"[WG] helper revoke-peer failed ({code}): {msg}", flush=True)
+            return
+
+        if not self.use_sudo and not path.is_file():
+            print("[WG] revoke_client: wg conf not found (mock?)", flush=True)
+            return
+
+        await self._wg_set_peer_remove(pk)
+        text = await self._read_main_conf()
+        if text is None:
+            print(
+                "[WG] revoke_client: cannot read wg conf — peer dropped from runtime only until next wg-quick restart; "
+                "install wg-backend-helper.sh or add sudoers for: sudo cat/tee "
+                f"{self.conf_path}",
+                flush=True,
+            )
+            return
+        new_text = self._strip_peer_blocks_with_pubkey(text, pk)
+        if new_text == text:
+            print(
+                f"[WG] revoke_client: no [Peer] with matching PublicKey (DB key prefix {pk[:12]}…); "
+                "check wg0.conf vs DB",
+                flush=True,
+            )
+        if not await self._write_main_conf(new_text):
+            return
+        await self._apply_syncconf()
+
+    async def delete_client_conf_file(self, client_name: str) -> None:
+        """Удаляет userX_Y.conf в каталоге клиентов (sudo rm при WG_USE_SUDO)."""
+        if not client_name or not re.fullmatch(r"[a-zA-Z0-9_.-]+", client_name):
+            print(f"[WG] delete_client_conf_file: invalid name {client_name!r}", flush=True)
             return
         path = self.clients_dir / f"{client_name}.conf"
+        if self._resolved_helper_script():
+            code, msg = await self._invoke_helper("rm-client-conf", client_name)
+            if code != 0:
+                print(f"[WG] helper rm-client-conf failed ({code}): {msg}", flush=True)
+            return
+        if self.use_sudo:
+            proc = await asyncio.create_subprocess_exec(
+                "sudo",
+                "rm",
+                "-f",
+                str(path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, err = await proc.communicate()
+            if proc.returncode != 0:
+                print(
+                    f"[WG] sudo rm client conf failed: {err.decode('utf-8', errors='replace')}",
+                    flush=True,
+                )
+            return
         try:
-            if path.exists():
+            if path.is_file():
                 path.unlink()
         except OSError as e:
             print(f"[WG] delete_client_conf_file failed: {e}", flush=True)
 
     async def restore_client(self, public_key: str, allowed_ip: str) -> None:
         """
-        Восстанавливает peer в wg0.conf (после разблокировки админом).
-        Добавляет блок [Peer] с PublicKey и AllowedIPs и применяет конфиг.
+        Восстанавливает peer в wg*.conf (после разблокировки админом) и применяет syncconf.
         """
-        if not self.conf_path or not Path(self.conf_path).exists():
-            return  # мок: ничего не делаем
+        if not (self.conf_path or "").strip():
+            return
+        pk = (public_key or "").strip()
+        if not pk:
+            return
         path = Path(self.conf_path)
         allowed = allowed_ip.strip()
         if allowed and "/" not in allowed:
             allowed = f"{allowed}/32"
-        peer_block = f"""
-[Peer]
-# restored
-PublicKey = {public_key}
-AllowedIPs = {allowed}
-"""
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if public_key in text:
-            return  # уже есть (например, не удалялся)
-        path.write_text(text.rstrip() + "\n" + peer_block.lstrip(), encoding="utf-8")
-        wg_prefix = ["sudo"] if self.use_sudo else []
-        strip_proc = await asyncio.create_subprocess_exec(
-            *wg_prefix, "wg-quick", "strip", "wg0",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+
+        if self._resolved_helper_script():
+            code, msg = await self._invoke_helper("append-peer", pk, allowed)
+            if code != 0:
+                print(f"[WG] helper append-peer failed ({code}): {msg}", flush=True)
+            return
+
+        if not self.use_sudo and not path.is_file():
+            return
+        text = await self._read_main_conf()
+        if text is None:
+            print("[WG] restore_client: cannot read wg conf", flush=True)
+            return
+        if self._main_conf_has_peer_pubkey(text, pk):
+            return
+        peer_block = (
+            "\n[Peer]\n"
+            "# restored\n"
+            f"PublicKey = {pk}\n"
+            f"AllowedIPs = {allowed}\n"
         )
-        strip_out, _ = await strip_proc.communicate()
-        proc = await asyncio.create_subprocess_exec(
-            *wg_prefix, "wg", "syncconf", "wg0", "-",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate(input=strip_out)
+        if not await self._write_main_conf(text.rstrip() + peer_block):
+            return
+        await self._apply_syncconf()
 
 
 wireguard_service = WireGuardService()

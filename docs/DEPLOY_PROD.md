@@ -161,7 +161,7 @@ python -c "from app.auth import hash_password; print(hash_password('твой_п�
 Есть два варианта.
 
 **Вариант A: запуск через sudo** (по умолчанию, `WG_USE_SUDO=true` в `.env`).  
-Скрипт лежит, например, в проекте: `scripts/add-wg-client.sh`. Его вызывает процесс через `sudo`, поэтому нужны права sudo без пароля для этого скрипта и для `wg syncconf` / `wg-quick strip` (см. примеры sudoers в старых версиях инструкции).
+Скрипт лежит, например, в проекте: `scripts/add-wg-client.sh`. Его вызывает процесс через `sudo`, поэтому нужны права sudo без пароля для этого скрипта и для `wg syncconf` / `wg-quick strip` (см. [WIREGUARD_SETUP.md](WIREGUARD_SETUP.md)). Для **блокировки и удаления конфигов** из админки дополнительно установи `scripts/wg-backend-helper.sh` на сервер и строку sudoers на этот файл — иначе `wg0.conf` и файлы в `clients/` останутся под root, и отзыв с диска не сработает.
 
 **Вариант B: запуск без sudo** (пользователь процесса имеет прямые права на скрипт и каталог WireGuard).  
 На сервере скрипт стоит, например, в `/usr/local/bin/add-wg-client.sh`, пользователь `amir` может запускать его напрямую и имеет доступ к `/etc/wireguard` (чтение/запись `wg0.conf`, каталог `clients`). В `.env` задаёшь:
