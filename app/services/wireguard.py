@@ -22,6 +22,18 @@ class WireGuardService:
         self.wg_interface = (getattr(settings, "wg_interface", None) or "wg0").strip() or "wg0"
         self._helper_override = (getattr(settings, "wg_helper_script_path", None) or "").strip()
 
+    def patch_config_endpoint(self, config_content: str) -> str:
+        """Подставляет актуальный SERVER_ENDPOINT из .env (для уже сохранённых конфигов в БД)."""
+        if not config_content:
+            return config_content
+        endpoint = (self.server_endpoint or "").strip()
+        if not endpoint:
+            return config_content
+        new_line = f"Endpoint = {endpoint}:{self.wg_port}"
+        if re.search(r"^Endpoint\s*=", config_content, re.MULTILINE):
+            return re.sub(r"^Endpoint\s*=.*$", new_line, config_content, count=1, flags=re.MULTILINE)
+        return config_content
+
     async def add_client(self, client_name: str) -> dict:
         """
         Запускает add-wg-client.sh на сервере и возвращает данные клиента.

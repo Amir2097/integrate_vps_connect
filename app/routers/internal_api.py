@@ -12,8 +12,22 @@ from app.config import settings
 from app.models import User, Payment, PaymentStatus, Subscription
 from app.services.subscription import subscription_service
 from app.services.telegram_notify import notify_admin_payment_buttons
+from app.services.broadcast import (
+    AUDIENCE_LABELS,
+    Audience,
+    broadcast_text,
+    get_recipient_telegram_ids,
+)
+from app.services.broadcast_messages import endpoint_update_broadcast_text
 
 router = APIRouter(prefix="/api/internal", tags=["internal"])
+
+
+def _parse_audience(audience: str) -> Audience:
+    a = (audience or "").strip()
+    if a not in AUDIENCE_LABELS:
+        raise HTTPException(400, f"Unknown audience: {audience}")
+    return a  # type: ignore[return-value]
 
 
 def _check_internal_secret(x_internal_secret: str | None = Header(None, alias="X-Internal-Secret")):
@@ -97,3 +111,73 @@ async def internal_admin_notify_payment(
         await db.flush()
         await db.commit()
     return {"ok": ok, "payment_id": body.payment_id, "deduplicated": False}
+
+
+@router.get("/broadcast/count")
+async def internal_broadcast_count(
+    audience: str,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(_check_internal_secret),
+):
+    aud = _parse_audience(audience)
+    ids = await get_recipient_telegram_ids(db, aud)
+    return {"count": len(ids), "audience": aud, "label": AUDIENCE_LABELS[aud]}
+
+
+@router.get("/broadcast/preview")
+async def internal_broadcast_preview(
+    audience: str,
+    preset: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(_check_internal_secret),
+):
+    aud = _parse_audience(audience)
+    if preset == "endpoint_update":
+        text = endpoint_update_broadcast_text()
+    else:
+        raise HTTPException(400, "Unknown preset")
+    ids = await get_recipient_telegram_ids(db, aud)
+    return {"count": len(ids), "audience": aud, "text": text}
+
+
+class BroadcastBody(BaseModel):
+    audience: str
+    text: str
+
+
+@router.post("/broadcast")
+async def internal_broadcast(
+    body: BroadcastBody,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(_check_internal_secret),
+):
+    aud = _parse_audience(body.audience)
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Empty text")
+    if len(text) > 4000:
+        raise HTTPException(400, "Text too long (max 4000)")
+    ids = await get_recipient_telegram_ids(db, aud)
+    stats = await broadcast_text(ids, text)
+    return {"ok": True, "audience": aud, **stats}
+
+
+class BroadcastPresetBody(BaseModel):
+    preset: str
+    audience: str = "with_vpn"
+
+
+@router.post("/broadcast-preset")
+async def internal_broadcast_preset(
+    body: BroadcastPresetBody,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(_check_internal_secret),
+):
+    aud = _parse_audience(body.audience)
+    if body.preset == "endpoint_update":
+        text = endpoint_update_broadcast_text()
+    else:
+        raise HTTPException(400, "Unknown preset")
+    ids = await get_recipient_telegram_ids(db, aud)
+    stats = await broadcast_text(ids, text)
+    return {"ok": True, "preset": body.preset, "audience": aud, **stats}

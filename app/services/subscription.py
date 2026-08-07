@@ -286,7 +286,8 @@ class SubscriptionService:
                 )
             )
             client = r.scalars().one_or_none()
-            return client.config_content if client else None
+            cfg = client.config_content if client else None
+            return wireguard_service.patch_config_endpoint(cfg) if cfg else None
         r = await db.execute(
             select(VpnClient)
             .where(VpnClient.user_id == user_id, VpnClient.is_blocked.is_(False))
@@ -294,7 +295,8 @@ class SubscriptionService:
             .limit(1)
         )
         client = r.scalars().one_or_none()
-        return client.config_content if client else None
+        cfg = client.config_content if client else None
+        return wireguard_service.patch_config_endpoint(cfg) if cfg else None
 
     @staticmethod
     async def get_user_vpn_configs_list(db: AsyncSession, user_id: int) -> list[dict]:
